@@ -1,0 +1,25 @@
+# systemd unit — keeps the bot running 24/7 and restarts it if it crashes or the server reboots.
+# Install:  sudo cp deploy/rok-ticket-bot.service /etc/systemd/system/
+#           sudo systemctl daemon-reload && sudo systemctl enable --now rok-ticket-bot
+# Logs:     journalctl -u rok-ticket-bot -f
+# Assumes the project lives in /home/botuser/rok-ticket-bot with a venv in .venv — edit paths/user if not.
+
+[Unit]
+Description=Rise of Kingdoms verification ticket bot
+After=network-online.target
+Wants=network-online.target
+# Don't hammer Discord's login endpoint in a crash loop (e.g. bad token)
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=botuser
+WorkingDirectory=/home/botuser/rok-ticket-bot
+ExecStart=/home/botuser/rok-ticket-bot/.venv/bin/python run.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
