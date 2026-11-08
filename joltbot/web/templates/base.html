@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}JoltBot{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  {% if css_built %}
+    <link rel="stylesheet" href="/static/app.css">
+  {% else %}
+    {# Development fallback until `app.css` is built (see README → "Building the CSS"). #}
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
+  {% endif %}
+  {% if htmx_available %}<script src="/static/vendor/htmx.min.js" defer></script>{% endif %}
+  <script src="/static/app.js" defer></script>
+</head>
+{# htmx sends this header with every request it makes, so htmx POSTs pass the CSRF check. #}
+<body class="min-h-full bg-slate-950 text-slate-100 antialiased"
+      {% if csrf_token %}hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'{% endif %}>
+  <header class="border-b border-slate-800 bg-slate-950/80">
+    <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
+      <a href="/" class="flex items-center gap-2 text-lg font-bold tracking-tight">
+        <img src="/static/favicon.svg" alt="" class="h-7 w-7">
+        <span>Jolt<span class="text-amber-400">Bot</span></span>
+      </a>
+      <nav class="flex items-center gap-3 text-sm">
+        {% if user %}
+          <a href="/servers" class="rounded-md px-3 py-1.5 text-slate-300 hover:bg-slate-800 hover:text-white">My servers</a>
+          <span class="hidden text-slate-400 sm:inline">{{ user.username }}</span>
+          <form method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="rounded-md px-3 py-1.5 text-slate-300 hover:bg-slate-800 hover:text-white">Log out</button>
+          </form>
+        {% else %}
+          <a href="/login" class="rounded-md bg-amber-400 px-3 py-1.5 font-semibold text-slate-950 hover:bg-amber-300">Login with Discord</a>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+  <main class="mx-auto max-w-6xl px-4 py-8">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="mx-auto max-w-6xl px-4 pb-8 text-xs text-slate-500">JoltBot</footer>
+</body>
+</html>

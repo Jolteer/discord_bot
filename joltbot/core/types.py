@@ -5,6 +5,7 @@ Discord IDs ("snowflakes") are 64-bit numbers. JavaScript numbers can only hold
 to a different ID. We therefore keep IDs as ``int`` in Python but always write
 them as strings in JSON (settings stored in the DB, API responses, forms).
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

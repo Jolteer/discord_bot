@@ -4,6 +4,7 @@ Imported by both the bot and the dashboard, so it must not import discord.py
 or FastAPI. Length limits match Discord's own limits, so anything an admin
 saves here can actually be sent to Discord.
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -67,9 +68,7 @@ class TicketMessages(BaseModel):
         max_length=3000,
     )
     deny_dm_kicked_suffix: str = Field("\n\nYou have been removed from the server.", max_length=500)
-    deny_dm_kept_suffix: str = Field(
-        "\n\nYou can open a new application if your situation changes.", max_length=500
-    )
+    deny_dm_kept_suffix: str = Field("\n\nYou can open a new application if your situation changes.", max_length=500)
     deny_reason_hint: str = Field("e.g. We couldn't verify your details.", max_length=100)
 
 
@@ -141,7 +140,7 @@ class TicketSettings(ModuleSettingsModel):
         return list(dict.fromkeys(ids))  # keeps order, drops repeats
 
     @model_validator(mode="after")
-    def _check_roles(self) -> "TicketSettings":
+    def _check_roles(self) -> TicketSettings:
         if self.pending_role_id is not None and self.pending_role_id in self.accept_role_ids:
             raise ValueError("The pending role can't also be a role given on accept.")
         extra_ids = [c.role_id for c in self.extra_role_choices]

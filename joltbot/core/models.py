@@ -4,6 +4,7 @@ Every table except web_sessions and bot_meta is keyed by guild_id, and every
 guild-owned row is deleted automatically (ON DELETE CASCADE) when its guild row
 is purged 30 days after JoltBot leaves a server.
 """
+
 from datetime import datetime, timezone
 from typing import Any
 

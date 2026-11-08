@@ -1,4 +1,5 @@
 """Joining, leaving, startup sync and the 30-day purge."""
+
 from datetime import timedelta
 
 from sqlalchemy import func, select
@@ -32,8 +33,15 @@ async def test_join_creates_every_module_switched_off(db):
 async def test_leave_then_rejoin_keeps_settings(db, two_guilds):
     actor = Actor(1, "admin", "dashboard")
     async with db.session() as session, session.begin():
-        await save_module(session, GUILD_A, "tickets", enabled=True, config=TicketSettings(staff_role_ids=[5]),
-                          expected_version=1, actor=actor)
+        await save_module(
+            session,
+            GUILD_A,
+            "tickets",
+            enabled=True,
+            config=TicketSettings(staff_role_ids=[5]),
+            expected_version=1,
+            actor=actor,
+        )
         await mark_guild_left(session, GUILD_A)
     async with db.session() as session:
         guild = await session.get(Guild, GUILD_A)
@@ -67,8 +75,15 @@ async def test_purge_after_30_days_deletes_everything_for_that_guild_only(db, tw
     actor = Actor(1, "admin", "dashboard")
     async with db.session() as session, session.begin():
         for guild_id in (GUILD_A, GUILD_B):
-            await save_module(session, guild_id, "tickets", enabled=True, config=TicketSettings(staff_role_ids=[5]),
-                              expected_version=1, actor=actor)
+            await save_module(
+                session,
+                guild_id,
+                "tickets",
+                enabled=True,
+                config=TicketSettings(staff_role_ids=[5]),
+                expected_version=1,
+                actor=actor,
+            )
             session.add(Ticket(guild_id=guild_id, user_id=1, username="u", answers=[]))
         await mark_guild_left(session, GUILD_A)
 

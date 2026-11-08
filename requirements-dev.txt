@@ -1,3 +1,5 @@
--r requirements.txt
-pytest>=8
-pytest-asyncio>=0.24
+# Everything the app needs (exact versions), plus test and lint tools.
+-r requirements.lock
+pytest==9.2.0
+pytest-asyncio==1.4.1.post1
+ruff==0.17.4

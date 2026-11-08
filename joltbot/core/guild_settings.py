@@ -10,6 +10,7 @@ Transactions: these functions never commit. The caller wraps them, e.g.
 
 so the setting change and its audit-log entry are saved together or not at all.
 """
+
 from __future__ import annotations
 
 import logging
@@ -138,8 +139,13 @@ async def save_module(
     if expected_version == 0:
         session.add(
             ModuleSetting(
-                guild_id=guild_id, module=module, enabled=enabled, config=stored,
-                version=1, updated_at=now, updated_by=actor.user_id,
+                guild_id=guild_id,
+                module=module,
+                enabled=enabled,
+                config=stored,
+                version=1,
+                updated_at=now,
+                updated_by=actor.user_id,
             )
         )
     else:
@@ -152,16 +158,23 @@ async def save_module(
                 ModuleSetting.module == module,
                 ModuleSetting.version == expected_version,
             )
-            .values(enabled=enabled, config=stored, version=expected_version + 1,
-                    updated_at=now, updated_by=actor.user_id)
+            .values(
+                enabled=enabled, config=stored, version=expected_version + 1, updated_at=now, updated_by=actor.user_id
+            )
         )
         if result.rowcount != 1:
             raise StaleSettingsError()
 
     session.add(
         AuditLog(
-            guild_id=guild_id, actor_id=actor.user_id, actor_name=actor.name[:100], source=actor.source,
-            action="settings.update", module=module, changes=changes, created_at=now,
+            guild_id=guild_id,
+            actor_id=actor.user_id,
+            actor_name=actor.name[:100],
+            source=actor.source,
+            action="settings.update",
+            module=module,
+            changes=changes,
+            created_at=now,
         )
     )
     await session.flush()

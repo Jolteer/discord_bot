@@ -1,0 +1,87 @@
+# JoltBot with Docker Compose. Used for local development AND on the server.
+#
+#   docker compose up -d --build                  # migrate, then start bot + dashboard
+#   docker compose --profile proxy up -d --build  # the same, plus Caddy for HTTPS (server)
+#   docker compose logs -f bot                    # follow the bot's logs
+#
+# Secrets and settings come from .env (copy .env.example). The SQLite database
+# lives in the "joltbot-data" volume, shared by the bot and the dashboard (WAL
+# mode lets both write safely). Both must therefore run on this one machine.
+
+name: joltbot
+
+x-app: &app
+  build: .
+  image: joltbot:latest
+  env_file: .env
+  volumes:
+    - joltbot-data:/app/data
+
+services:
+  # Runs `alembic upgrade head` once, then exits. bot and web wait for it to succeed.
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      LOG_DIR: ""
+    restart: "no"
+
+  bot:
+    <<: *app
+    command: ["python", "-m", "joltbot.bot"]
+    environment:
+      LOG_DIR: ""  # console only; read it with `docker compose logs`
+    # No health check: the bot has no web server. Docker restarts it if it exits.
+    # Note: Docker can't skip restarts for "bad token" (exit 2) like systemd does,
+    # but it backs off to one restart a minute. Fix .env, then `docker compose up -d`.
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    <<: *app
+    command: ["python", "-m", "joltbot.web"]
+    environment:
+      HOST: 0.0.0.0  # listen on the container network (overrides .env)
+      PORT: "8000"
+      LOG_DIR: ""
+      # Trust X-Forwarded-* from any address: port 8000 is only reachable from this
+      # machine and from Caddy (see "ports" below), never from the internet.
+      FORWARDED_ALLOW_IPS: "*"
+    ports:
+      - "127.0.0.1:8000:8000"  # http://localhost:8000 on this machine only
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # HTTPS in production. Only starts with `--profile proxy`.
+  caddy:
+    image: caddy:2.8.4-alpine
+    profiles: ["proxy"]
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  joltbot-data:
+  caddy-data:
+  caddy-config:

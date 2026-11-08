@@ -1,0 +1,27 @@
+# FALLBACK (Docker is the main deploy path; see README). systemd unit for the JoltBot web dashboard (listens on 127.0.0.1:8000; Caddy is in front).
+# Install:  sudo cp deploy/systemd/joltbot-web.service /etc/systemd/system/
+#           sudo systemctl daemon-reload && sudo systemctl enable --now joltbot-web
+# Logs:     journalctl -u joltbot-web -f
+
+[Unit]
+Description=JoltBot web dashboard
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=botuser
+WorkingDirectory=/home/botuser/joltbot
+ExecStart=/home/botuser/joltbot/.venv/bin/python -m joltbot.web --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+RestartSteps=5
+RestartMaxDelaySec=120
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

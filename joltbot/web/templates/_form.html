@@ -1,0 +1,77 @@
+{# Small reusable form pieces. Import with: {% import "_form.html" as f %} #}
+
+{% macro section(title, help="") %}
+  <fieldset class="rounded-xl border border-slate-800 bg-slate-900 p-5">
+    <legend class="px-1 text-base font-semibold">{{ title }}</legend>
+    {% if help %}<p class="-mt-1 mb-4 text-sm text-slate-400">{{ help }}</p>{% endif %}
+    <div class="space-y-4">{{ caller() }}</div>
+  </fieldset>
+{% endmacro %}
+
+{% macro checkbox(name, label, checked, help="") %}
+  <label class="flex items-start gap-3">
+    <input type="checkbox" name="{{ name }}" {{ 'checked' if checked }} class="mt-1 h-4 w-4 accent-amber-400">
+    <span><span class="text-sm">{{ label }}</span>{% if help %}<span class="block text-xs text-slate-400">{{ help }}</span>{% endif %}</span>
+  </label>
+{% endmacro %}
+
+{% macro role_picker(name, label, roles, selected, help="", assign=False) %}
+  <div>
+    <div class="text-sm font-medium">{{ label }}</div>
+    {% if help %}<p class="text-xs text-slate-400">{{ help }}</p>{% endif %}
+    <div class="mt-2 grid max-h-56 gap-1 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-2 sm:grid-cols-2">
+      {% for r in roles %}
+        <label class="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-slate-900 {{ 'opacity-50' if assign and r.managed }}">
+          <input type="checkbox" name="{{ name }}" value="{{ r.id }}" {{ 'checked' if r.id in selected }}
+                 {{ 'disabled' if assign and r.managed }} class="h-4 w-4 accent-amber-400">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-full" style="background: {{ r.color or '#64748b' }}"></span>
+          <span class="truncate">{{ r.name }}</span>
+          {% if assign and not r.assignable and not r.managed %}<span class="ml-auto text-xs text-amber-300" title="JoltBot's role must be above this role">above JoltBot</span>{% endif %}
+        </label>
+      {% else %}
+        <p class="text-sm text-slate-500">This server has no roles yet.</p>
+      {% endfor %}
+    </div>
+  </div>
+{% endmacro %}
+
+{% macro role_select(name, label, roles, selected, help="") %}
+  <label class="block">
+    <span class="text-sm font-medium">{{ label }}</span>
+    {% if help %}<span class="block text-xs text-slate-400">{{ help }}</span>{% endif %}
+    <select name="{{ name }}" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+      <option value="">(none)</option>
+      {% for r in roles if not r.managed %}
+        <option value="{{ r.id }}" {{ 'selected' if r.id == selected }}>{{ r.name }}{{ ' (above JoltBot)' if not r.assignable }}</option>
+      {% endfor %}
+    </select>
+  </label>
+{% endmacro %}
+
+{% macro channel_select(name, label, channels, selected, help="", none_label="(pick one)") %}
+  <label class="block">
+    <span class="text-sm font-medium">{{ label }}</span>
+    {% if help %}<span class="block text-xs text-slate-400">{{ help }}</span>{% endif %}
+    <select name="{{ name }}" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+      <option value="">{{ none_label }}</option>
+      {% for c in channels %}
+        <option value="{{ c.id }}" {{ 'selected' if c.id == selected }}>{{ '#' if c.category is defined else '' }}{{ c.name }}{% if c.category %}  ({{ c.category }}){% endif %}</option>
+      {% endfor %}
+    </select>
+  </label>
+{% endmacro %}
+
+{% macro messages_box(errors, warnings=[], issues=[], saved=False) %}
+  {% if saved %}
+    <div class="rounded-lg border border-emerald-800 bg-emerald-950/60 p-3 text-sm text-emerald-200">Saved. JoltBot uses the new settings right away.</div>
+  {% endif %}
+  {% if errors %}
+    <div class="rounded-lg border border-red-800 bg-red-950/60 p-3 text-sm text-red-200" role="alert">
+      <p class="font-semibold">Not saved. Please fix:</p>
+      <ul class="mt-1 list-disc pl-5">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+  {% for w in warnings + issues %}
+    <div class="rounded-lg border border-amber-800 bg-amber-950/50 p-3 text-sm text-amber-200">⚠️ {{ w }}</div>
+  {% endfor %}
+{% endmacro %}

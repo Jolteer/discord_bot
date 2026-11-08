@@ -1,0 +1,24 @@
+# Keep the build small and never copy secrets or local data into the image.
+.git
+.github
+.venv
+.env
+.env.*
+config.json
+data/
+logs/
+**/__pycache__
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.db
+*.db-*
+*.bak-*
+tests/
+deploy/
+docs/
+# Built inside the image instead
+tailwindcss
+tailwindcss.exe
+joltbot/web/static/app.css
+joltbot/web/static/vendor/htmx.min.js

@@ -1,0 +1,32 @@
+{% extends "guild/_layout.html" %}
+{% import "_form.html" as f %}
+{% block page %}
+<h1 class="text-2xl font-bold">General</h1>
+<div class="mt-4 space-y-2">{{ f.messages_box(errors, saved=saved) }}</div>
+
+<form method="post" action="/servers/{{ guild.id }}/general" class="mt-6 space-y-6">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% for name, v in versions.items() %}<input type="hidden" name="version_{{ name }}" value="{{ v }}">{% endfor %}
+
+  {% call f.section("Modules", "Switch features on or off for this server. A module must be set up before it can be switched on.") %}
+    {% for m in modules %}
+      {{ f.checkbox("enabled_" ~ m.name, m.title, m.enabled, m.description) }}
+    {% endfor %}
+  {% endcall %}
+
+  {% call f.section("Appearance") %}
+    <label class="flex items-center gap-3">
+      <input type="color" name="embed_color" value="{{ embed_color }}" class="h-10 w-14 rounded border border-slate-700 bg-slate-950">
+      <span class="text-sm">Embed colour for JoltBot's messages in this server</span>
+    </label>
+  {% endcall %}
+
+  {% call f.section("Commands") %}
+    <p class="text-sm text-slate-300">JoltBot uses slash commands only. Type <code class="text-amber-300">/tickets</code> in Discord to see them.
+      By default only members with Manage Server can see them. To let other roles use them, go to
+      Server Settings → Integrations → JoltBot.</p>
+  {% endcall %}
+
+  <button class="rounded-lg bg-amber-400 px-5 py-2 font-semibold text-slate-950 hover:bg-amber-300">Save changes</button>
+</form>
+{% endblock %}

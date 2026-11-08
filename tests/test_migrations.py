@@ -4,6 +4,7 @@ If this fails after you edit models.py, run:
     alembic revision --autogenerate -m "describe your change"
 and review the new file in migrations/versions/.
 """
+
 from pathlib import Path
 
 from alembic import command

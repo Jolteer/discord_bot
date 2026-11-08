@@ -1,0 +1,7 @@
+/* Tailwind input. Build the real stylesheet with (see README):
+     tailwindcss -i joltbot/web/styles/input.css -o joltbot/web/static/app.css --minify
+   Tailwind scans these folders for the class names used in templates: */
+@import "tailwindcss" source(none);
+@source "../templates";
+@source "../../modules";
+@source "../static/app.js";

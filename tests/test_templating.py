@@ -15,7 +15,7 @@ def test_old_guild_name_still_works():
 
 def test_stray_braces_never_crash():
     # The old str.format-based code raised an error on all of these.
-    for text in ("{", "}", "{0}", "{user", "{a.b}", "{{user}}", "json: {\"a\": 1}"):
+    for text in ("{", "}", "{0}", "{user", "{a.b}", "{{user}}", 'json: {"a": 1}'):
         render(text, user="x")
     assert render("{{user}}", user="x") == "{x}"
 

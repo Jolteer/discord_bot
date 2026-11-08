@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="py-12 text-center">
+  <img src="/static/favicon.svg" alt="" class="mx-auto h-16 w-16">
+  <h1 class="mt-6 text-4xl font-extrabold tracking-tight sm:text-5xl">Jolt<span class="text-amber-400">Bot</span></h1>
+  <p class="mx-auto mt-4 max-w-xl text-lg text-slate-300">
+    Verification tickets for your Discord server, set up from your browser.
+    New members apply through a short form, and your staff accept or deny them in a private ticket.
+  </p>
+  <div class="mt-8 flex flex-wrap justify-center gap-3">
+    {% if invite_url %}
+      <a href="{{ invite_url }}" class="rounded-lg bg-amber-400 px-5 py-2.5 font-semibold text-slate-950 hover:bg-amber-300">Add to Server</a>
+    {% endif %}
+    {% if user %}
+      <a href="/servers" class="rounded-lg border border-slate-700 px-5 py-2.5 font-semibold hover:bg-slate-800">Open dashboard</a>
+    {% else %}
+      <a href="/login" class="rounded-lg border border-slate-700 px-5 py-2.5 font-semibold hover:bg-slate-800">Login</a>
+    {% endif %}
+  </div>
+</section>
+
+<section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+  {% for title, text in [
+    ("Tickets & verification", "A private ticket for every applicant. Staff accept, deny or close with one click."),
+    ("Your wording", "Every message, question and role is yours to set, with a live preview."),
+    ("Full transcripts", "Each ticket's conversation and files are saved to your log channel."),
+    ("Audit log", "See who changed which setting and when."),
+  ] %}
+    <div class="rounded-xl border border-slate-800 bg-slate-900 p-5">
+      <h2 class="font-semibold text-amber-400">{{ title }}</h2>
+      <p class="mt-2 text-sm text-slate-300">{{ text }}</p>
+    </div>
+  {% endfor %}
+</section>
+{% endblock %}

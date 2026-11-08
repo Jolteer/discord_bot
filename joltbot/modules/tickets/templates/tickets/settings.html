@@ -1,0 +1,139 @@
+{% extends "guild/_layout.html" %}
+{% import "_form.html" as f %}
+{% block page %}
+<div class="flex flex-wrap items-center justify-between gap-3">
+  <h1 class="text-2xl font-bold">Tickets &amp; verification</h1>
+  <form method="post" action="/servers/{{ guild.id }}/refresh">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="/servers/{{ guild.id }}/tickets">
+    <button class="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800" title="Reload roles and channels from Discord">↻ Refresh roles &amp; channels</button>
+  </form>
+</div>
+
+<div class="mt-4 space-y-2">{{ f.messages_box(errors, warnings, issues, saved) }}</div>
+
+<form method="post" action="/servers/{{ guild.id }}/tickets" class="mt-6 space-y-6" data-server-name="{{ guild.name }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="version" value="{{ version }}">
+
+  {% call f.section("Status") %}
+    {{ f.checkbox("enabled", "Ticket module is ON", enabled,
+                  "While off, JoltBot ignores the panel button and doesn't give roles to new members.") }}
+    <p class="text-xs text-slate-400">After setting up, post the panel in Discord with <code class="text-amber-300">/tickets panel</code>, then check everything with <code class="text-amber-300">/tickets diagnostics</code>.</p>
+  {% endcall %}
+
+  {% call f.section("Staff", "Who can accept, deny and close tickets.") %}
+    {{ f.role_picker("staff_role_ids", "Staff roles", roles, values.staff_role_ids) }}
+    {{ f.checkbox("allow_administrators", "Members with Administrator also count as staff", values.allow_administrators) }}
+  {% endcall %}
+
+  {% call f.section("Channels") %}
+    <div class="grid gap-4 sm:grid-cols-2">
+      {{ f.channel_select("panel_channel_id", "Panel channel", text_channels, values.panel_channel_id,
+                          "Where the Open Application button is posted.") }}
+      {{ f.channel_select("ticket_category_id", "Ticket category", categories, values.ticket_category_id,
+                          "New ticket channels are created here.") }}
+      {{ f.channel_select("log_channel_id", "Log channel", text_channels, values.log_channel_id,
+                          "Transcripts and decisions. Make it staff-only.") }}
+      {{ f.channel_select("welcome_channel_id", "Welcome channel (optional)", text_channels, values.welcome_channel_id,
+                          "Another channel pending members may see. Only used by diagnostics.", "(none)") }}
+    </div>
+  {% endcall %}
+
+  {% call f.section("Roles", "JoltBot's own role must be above every role it gives or removes.") %}
+    {{ f.role_picker("accept_role_ids", "Roles given when accepted", roles, values.accept_role_ids,
+                     "E.g. Member. Members who already have one of these are told they're verified.", assign=True) }}
+    {{ f.role_select("pending_role_id", "Pending role (optional)", roles, values.pending_role_id,
+                     "Given to everyone who joins and removed on accept, e.g. Unverified.") }}
+    {{ f.checkbox("assign_pending_on_startup", "Give the pending role to people who joined while JoltBot was offline",
+                  values.assign_pending_on_startup) }}
+    <div>
+      <div class="text-sm font-medium">Extra role choices (optional)</div>
+      <p class="text-xs text-slate-400">Staff can pick one of these when accepting, e.g. a team. Leave a row empty to skip it.</p>
+      <div class="mt-2 space-y-2">
+        {% for row in extras %}
+          <div class="grid grid-cols-[1fr_1fr_5rem] gap-2">
+            <input name="extra_label_{{ loop.index0 }}" value="{{ row.label }}" placeholder="Label" maxlength="100"
+                   class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+            <select name="extra_role_{{ loop.index0 }}" class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+              <option value="">(role)</option>
+              {% for r in roles if not r.managed %}
+                <option value="{{ r.id }}" {{ 'selected' if r.id == row.role_id }}>{{ r.name }}</option>
+              {% endfor %}
+            </select>
+            <input name="extra_emoji_{{ loop.index0 }}" value="{{ row.emoji or '' }}" placeholder="Emoji" maxlength="64"
+                   class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endcall %}
+
+  {% call f.section("New-ticket ping") %}
+    {{ f.checkbox("ping_enabled", "Ping staff when a ticket opens", values.ping_enabled) }}
+    {{ f.role_picker("ping_role_ids", "Ping these roles instead of the staff roles (optional)", roles, values.ping_role_ids,
+                     "Leave empty to ping the staff roles. Ping roles can see tickets but can't use the staff buttons.") }}
+  {% endcall %}
+
+  {% call f.section("Application form", "Up to 5 questions. Leave a question's text empty to remove it.") %}
+    {% for q in questions %}
+      <div class="rounded-lg border border-slate-800 p-3">
+        <div class="grid gap-2 sm:grid-cols-2">
+          <input name="q_label_{{ loop.index0 }}" value="{{ q.label }}" placeholder="Question {{ loop.index }}" maxlength="45"
+                 class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+          <input name="q_placeholder_{{ loop.index0 }}" value="{{ q.placeholder }}" placeholder="Hint text (optional)" maxlength="100"
+                 class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+        </div>
+        <div class="mt-2 flex flex-wrap items-center gap-4 text-sm">
+          {{ f.checkbox("q_required_" ~ loop.index0, "Required", q.required) }}
+          {{ f.checkbox("q_long_" ~ loop.index0, "Long answer", q.long) }}
+          <label class="flex items-center gap-2">Max length
+            <input type="number" name="q_max_{{ loop.index0 }}" value="{{ q.max_length }}" min="1" max="1000"
+                   class="w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-sm"></label>
+        </div>
+      </div>
+    {% endfor %}
+    {{ f.checkbox("require_attachment", "Warn staff on Accept if the applicant hasn't uploaded a file (e.g. a screenshot)",
+                  values.require_attachment) }}
+  {% endcall %}
+
+  {% call f.section("Messages", "Placeholders like {user} and {server} are filled in automatically. The preview updates as you type.") %}
+    {% for m in messages %}
+      <div class="grid gap-3 lg:grid-cols-2">
+        <label class="block">
+          <span class="text-sm font-medium">{{ m.label }}</span>
+          <span class="block text-xs text-slate-400">{{ m.help }}{% if m.placeholders %} Placeholders:
+            {% for p in m.placeholders %}<code class="text-amber-300">{{ '{' ~ p ~ '}' }}</code>{{ ', ' if not loop.last }}{% endfor %}{% endif %}</span>
+          {% if m.multiline %}
+            <textarea name="msg_{{ m.key }}" rows="4" {% if m.max_length %}maxlength="{{ m.max_length }}"{% endif %}
+                      data-preview="preview-{{ m.key }}"
+                      class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm">{{ m.value }}</textarea>
+          {% else %}
+            <input name="msg_{{ m.key }}" value="{{ m.value }}" {% if m.max_length %}maxlength="{{ m.max_length }}"{% endif %}
+                   data-preview="preview-{{ m.key }}"
+                   class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm">
+          {% endif %}
+        </label>
+        <div>
+          <span class="text-xs uppercase tracking-wide text-slate-500">Preview</span>
+          <div id="preview-{{ m.key }}" class="mt-1 min-h-10 whitespace-pre-wrap break-words rounded-lg border-l-4 border-amber-400 bg-[#2b2d31] px-3 py-2 text-sm text-slate-100"></div>
+        </div>
+      </div>
+    {% endfor %}
+  {% endcall %}
+
+  {% call f.section("Behaviour") %}
+    <label class="block max-w-xs">
+      <span class="text-sm font-medium">Delete closed ticket channels after (seconds)</span>
+      <input type="number" name="delete_delay_seconds" value="{{ values.delete_delay_seconds }}" min="0" max="3600"
+             class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+    </label>
+    {{ f.checkbox("reupload_attachments", "Copy uploaded files to the log channel before deleting the ticket",
+                  values.reupload_attachments, "Discord deletes files when their channel is deleted. Recommended.") }}
+  {% endcall %}
+
+  <div class="sticky bottom-0 -mx-4 border-t border-slate-800 bg-slate-950/95 px-4 py-3">
+    <button class="rounded-lg bg-amber-400 px-5 py-2 font-semibold text-slate-950 hover:bg-amber-300">Save changes</button>
+  </div>
+</form>
+{% endblock %}
