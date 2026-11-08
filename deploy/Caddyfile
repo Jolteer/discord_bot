@@ -1,0 +1,11 @@
+# Caddy reverse proxy for the Docker setup (the "caddy" service in docker-compose.yml).
+# Caddy gets and renews the HTTPS certificate automatically.
+#
+# Set DOMAIN in .env (e.g. DOMAIN=joltbot.example.com). It must match
+# PUBLIC_BASE_URL (https://joltbot.example.com), and the domain's DNS must point
+# at this server before you start Caddy.
+
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:8000
+}

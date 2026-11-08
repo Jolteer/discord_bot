@@ -1,0 +1,11 @@
+# FALLBACK, for the systemd setup only (Docker uses deploy/Caddyfile). Caddy reverse proxy for the JoltBot dashboard.
+# Caddy gets and renews the HTTPS certificate automatically.
+#
+# 1. Replace joltbot.example.com with your real domain. It must match
+#    PUBLIC_BASE_URL in .env (https://joltbot.example.com).
+# 2. sudo cp deploy/systemd/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+
+joltbot.example.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8000
+}

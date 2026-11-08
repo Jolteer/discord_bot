@@ -1,0 +1,36 @@
+# FALLBACK (Docker is the main deploy path; see README). systemd unit for the JoltBot Discord bot.
+# Install:  sudo cp deploy/systemd/joltbot-bot.service /etc/systemd/system/
+#           sudo systemctl daemon-reload && sudo systemctl enable --now joltbot-bot
+# Logs:     journalctl -u joltbot-bot -f
+# Assumes the project lives in /home/botuser/joltbot with a venv in .venv; edit if not.
+
+[Unit]
+Description=JoltBot Discord bot
+After=network-online.target
+Wants=network-online.target
+# Never stop trying. The old unit gave up after 5 failed starts in 5 minutes, which
+# is how a short network or Discord outage could leave the bot offline for good.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=botuser
+WorkingDirectory=/home/botuser/joltbot
+ExecStart=/home/botuser/joltbot/.venv/bin/python -m joltbot.bot
+Restart=always
+RestartSec=10
+# Wait longer between repeated crashes, up to 5 minutes (needs systemd 254+, e.g. Ubuntu 24.04;
+# older versions ignore these two lines). The bot also retries network errors by itself.
+RestartSteps=5
+RestartMaxDelaySec=300
+# Exit code 2 = Discord rejected the token, 3 = setup problem (.env, database, intents).
+# Restarting can't fix those, so don't hammer Discord: fix it, then `systemctl restart`.
+RestartPreventExitStatus=2 3
+Environment=PYTHONUNBUFFERED=1
+# Light hardening: no privilege escalation, read-only system folders, private /tmp.
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
