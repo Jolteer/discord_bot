@@ -4,9 +4,11 @@ Both processes open the same SQLite file. SQLite's WAL mode lets one process
 write while the other reads. To switch to Postgres later, change DATABASE_URL
 (and `pip install asyncpg`); nothing else here needs to change.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import event
 from sqlalchemy.engine import make_url
@@ -15,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from .models import Base
 
 
-def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+def _sqlite_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
     """Runs on every new SQLite connection.
 
     - foreign_keys: SQLite ignores FOREIGN KEY / ON DELETE CASCADE unless this is on.

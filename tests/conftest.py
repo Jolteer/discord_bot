@@ -1,4 +1,5 @@
 """Shared test fixtures. Every test gets its own fresh SQLite file."""
+
 from __future__ import annotations
 
 import pytest

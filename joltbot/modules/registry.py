@@ -1,10 +1,11 @@
 """The list of JoltBot's feature modules.
 
 To add a module (e.g. auto-roles): create joltbot/modules/<name>/ with a
-settings.py (a ModuleSettingsModel subclass), optionally a bot cog and
-dashboard routes, then add one ModuleInfo line below. The bot and the
+settings.py (a ModuleSettingsModel subclass), optionally a bot cog (cog.py),
+dashboard routes (web.py) and templates/<name>/, then add one ModuleInfo below. The bot and the
 dashboard both read this list, so nothing else needs restructuring.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ class ModuleInfo:
     settings_model: type[ModuleSettingsModel]
     toggleable: bool = True  # False = always on (e.g. general settings)
     cog: str | None = None  # dotted path of the bot extension, loaded only by the bot process
+    web: str | None = None  # dotted path of a module with a FastAPI `router`, loaded only by the dashboard
 
 
 MODULES: dict[str, ModuleInfo] = {
@@ -33,6 +35,7 @@ MODULES: dict[str, ModuleInfo] = {
             description="Server-wide settings such as embed colour.",
             settings_model=GeneralSettings,
             toggleable=False,
+            web="joltbot.modules.general.web",
         ),
         ModuleInfo(
             name="tickets",
@@ -40,6 +43,7 @@ MODULES: dict[str, ModuleInfo] = {
             description="New members apply through a form; staff accept or deny in a private ticket.",
             settings_model=TicketSettings,
             cog="joltbot.modules.tickets.cog",
+            web="joltbot.modules.tickets.web",
         ),
     )
 }

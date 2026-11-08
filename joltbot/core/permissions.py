@@ -3,6 +3,7 @@
 Discord sends permissions as one big integer (as a string in JSON); each
 permission is one bit. See https://discord.com/developers/docs/topics/permissions
 """
+
 from __future__ import annotations
 
 from urllib.parse import urlencode
@@ -13,17 +14,17 @@ MANAGE_GUILD = 1 << 5  # shown as "Manage Server" in the Discord app
 # What JoltBot asks for in its invite link. Same set the old bot used; nothing
 # more, and deliberately NOT Administrator.
 BOT_PERMISSIONS = {
-    "Kick Members": 1 << 1,           # only for Deny -> Kick
-    "Manage Channels": 1 << 4,        # create/delete ticket channels
+    "Kick Members": 1 << 1,  # only for Deny -> Kick
+    "Manage Channels": 1 << 4,  # create/delete ticket channels
     "View Channels": 1 << 10,
     "Send Messages": 1 << 11,
     "Manage Messages": 1 << 13,
     "Embed Links": 1 << 14,
-    "Attach Files": 1 << 15,          # transcripts + re-uploaded attachments
+    "Attach Files": 1 << 15,  # transcripts + re-uploaded attachments
     "Read Message History": 1 << 16,  # transcripts
-    "Mention All Roles": 1 << 17,     # so new-ticket pings notify staff roles that aren't mentionable
-    "Manage Roles": 1 << 28,          # assign roles; set private permissions on each ticket
-    "Pin Messages": 1 << 51,          # pin the application panel
+    "Mention All Roles": 1 << 17,  # so new-ticket pings notify staff roles that aren't mentionable
+    "Manage Roles": 1 << 28,  # assign roles; set private permissions on each ticket
+    "Pin Messages": 1 << 51,  # pin the application panel
 }
 BOT_PERMISSIONS_VALUE = sum(BOT_PERMISSIONS.values())  # = 2251800082377746
 

@@ -7,6 +7,7 @@ Usage (from the project folder, with the venv active):
 The database URL comes from DATABASE_URL in .env, unless something (like the
 tests) sets sqlalchemy.url explicitly.
 """
+
 import asyncio
 from logging.config import fileConfig
 

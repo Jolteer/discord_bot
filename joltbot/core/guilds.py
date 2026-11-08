@@ -1,4 +1,5 @@
 """Which servers JoltBot is in: join, leave, startup sync and the 30-day purge."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -92,8 +93,3 @@ async def purge_left_guilds(session: AsyncSession, now: datetime | None = None) 
     if ids:
         await session.execute(delete(Guild).where(Guild.id.in_(ids)))
     return ids
-
-
-async def is_active_guild(session: AsyncSession, guild_id: int) -> bool:
-    guild = await session.get(Guild, guild_id)
-    return guild is not None and guild.active

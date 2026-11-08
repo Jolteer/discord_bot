@@ -1,4 +1,5 @@
 """Server-wide settings that don't belong to a single feature module."""
+
 from pydantic import Field
 
 from ..base import ModuleSettingsModel

@@ -1,4 +1,5 @@
 """Base class for every module's settings."""
+
 from pydantic import BaseModel, ConfigDict
 
 

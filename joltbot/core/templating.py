@@ -7,6 +7,7 @@ everything else exactly as typed.
 
 The dashboard's live preview mirrors these rules in JavaScript.
 """
+
 from __future__ import annotations
 
 import re
