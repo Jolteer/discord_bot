@@ -74,6 +74,19 @@ async def _render_form(
 
 @router.get("")
 async def show(request: Request, access: RequireGuild, saved: bool = False):
+    """Render the tickets settings form for this guild.
+
+    Args:
+        request: FastAPI request.
+        access: Authenticated guild manager (``RequireGuild``).
+        saved: Query flag to show the success banner after a redirect.
+
+    Returns:
+        HTML response for ``tickets/settings.html``.
+
+    Raises:
+        HTTPException: 503 if Discord roles/channels cannot be loaded.
+    """
     data = await _guild_data(request, access)
     async with get_db(request).session() as session:
         state = await load_module(session, access.guild_id, "tickets")
@@ -92,6 +105,21 @@ async def show(request: Request, access: RequireGuild, saved: bool = False):
 
 @router.post("", dependencies=[CsrfProtected])
 async def save(request: Request, access: RequireGuild):
+    """Validate and save ticket settings; guild id comes only from the URL.
+
+    Rejects foreign role/channel IDs and refuses to enable until
+    ``setup_problems()`` is empty.
+
+    Args:
+        request: FastAPI request (form body + CSRF).
+        access: Authenticated guild manager.
+
+    Returns:
+        Redirect to GET with ``?saved=1``, or the form with errors (400).
+
+    Raises:
+        HTTPException: 503 if Discord guild data cannot be loaded.
+    """
     form = await request.form()
     values = parse_form(form)
     enabled = "enabled" in form

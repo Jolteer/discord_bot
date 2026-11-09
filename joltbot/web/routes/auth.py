@@ -33,6 +33,14 @@ STATE_MAX_AGE = 600  # seconds the user has to finish logging in on Discord
 
 @router.get("/login")
 async def login(request: Request):
+    """Start Discord OAuth: set ``state`` cookie and redirect to Discord.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Returns:
+        303 redirect to Discord's authorize URL.
+    """
     config = get_config(request)
     state = secrets.token_urlsafe(32)
     response = RedirectResponse(get_discord(request).authorize_url(state), status_code=303)
@@ -58,6 +66,17 @@ async def _login_failed(request: Request, message: str):
 
 @router.get("/auth/callback")
 async def callback(request: Request, code: str | None = None, state: str | None = None, error: str | None = None):
+    """Finish Discord OAuth: validate ``state``, exchange ``code``, create session.
+
+    Args:
+        request: Incoming HTTP request (includes state cookie).
+        code: Authorization code from Discord, or None on failure.
+        state: Must match the short-lived state cookie.
+        error: Discord error query param when the user cancels / consent fails.
+
+    Returns:
+        Redirect to ``/servers`` on success, or an error page (400).
+    """
     config = get_config(request)
     expected = request.cookies.get(STATE_COOKIE)
     if error:
@@ -101,7 +120,18 @@ async def callback(request: Request, code: str | None = None, state: str | None 
 
 @router.post("/logout", dependencies=[CsrfProtected])
 async def logout(request: Request, ws: RequireSession):
+    """End the dashboard session and clear the session cookie.
+
+    Args:
+        request: Incoming HTTP request.
+        ws: Current logged-in session (deleted from the DB).
+
+    Returns:
+        Redirect to the landing page.
+    """
     await delete_session(get_db(request), ws.id)
     response = RedirectResponse("/", status_code=303)
+    # TODO: When using ``__Host-joltbot_session`` (HTTPS), browsers may require
+    # ``secure=True`` on delete_cookie to clear the cookie; verify logout clears it.
     response.delete_cookie(session_cookie_name(get_config(request)), path="/")
     return response

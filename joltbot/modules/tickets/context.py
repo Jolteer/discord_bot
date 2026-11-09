@@ -22,17 +22,38 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TicketContext:
+    """Fresh ticket + general settings for one guild event.
+
+    Attributes:
+        enabled: Tickets module toggle from the dashboard.
+        settings: Validated ``TicketSettings``.
+        colour: Embed colour from general settings.
+    """
+
     enabled: bool
     settings: TicketSettings
     colour: discord.Colour
 
     @property
     def ready(self) -> bool:
-        """Switched on AND fully set up."""
+        """True when the module is on and setup has no blocking gaps.
+
+        Returns:
+            Whether ticket creation / panel flows should proceed.
+        """
         return self.enabled and not self.settings.setup_problems()
 
 
 async def load_context(bot: JoltBot, guild_id: int) -> TicketContext:
+    """Load ticket and general settings for ``guild_id`` from the database.
+
+    Args:
+        bot: Running bot (provides ``db``).
+        guild_id: Discord guild snowflake for the event.
+
+    Returns:
+        Immutable ``TicketContext`` used by views, commands, and the service.
+    """
     async with bot.db.session() as session:
         tickets = await load_module(session, guild_id, "tickets")
         general = await load_module(session, guild_id, "general")

@@ -30,8 +30,17 @@ BOT_PERMISSIONS_VALUE = sum(BOT_PERMISSIONS.values())  # = 2251800082377746
 
 
 def can_manage_guild(permissions: int | str | None, *, owner: bool = False) -> bool:
-    """True if this user may manage JoltBot for a server: the owner, an
-    Administrator, or anyone with Manage Server."""
+    """Whether a Discord user may manage JoltBot for a server.
+
+    True for the guild owner, anyone with Administrator, or Manage Server.
+
+    Args:
+        permissions: Discord permission bitfield (int or decimal string from JSON).
+        owner: True if the user owns the guild (short-circuits the bit check).
+
+    Returns:
+        True if the user may open dashboard guild pages / change settings.
+    """
     if owner:
         return True
     try:
@@ -42,8 +51,18 @@ def can_manage_guild(permissions: int | str | None, *, owner: bool = False) -> b
 
 
 def bot_invite_url(client_id: str, guild_id: int | str | None = None) -> str:
-    """Link that adds JoltBot to a server with the right permissions pre-ticked.
-    With guild_id, that server is pre-selected and can't be changed."""
+    """Build an OAuth invite with JoltBot's permission set pre-selected.
+
+    Deliberately omits Administrator. With ``guild_id``, that server is
+    pre-selected and the picker is locked.
+
+    Args:
+        client_id: Discord application client ID.
+        guild_id: Optional guild to pre-select.
+
+    Returns:
+        Full ``https://discord.com/oauth2/authorize?...`` URL.
+    """
     params = {
         "client_id": client_id,
         "scope": "bot applications.commands",

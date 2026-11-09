@@ -41,11 +41,25 @@ DISCORD_TROUBLE = "Discord didn't respond properly. Nothing was changed; please 
 
 
 def ticket_channel_name(member: discord.Member) -> str:
+    """Build a Discord-safe channel name from the member's username.
+
+    Args:
+        member: Applicant whose name becomes the channel slug.
+
+    Returns:
+        Name like ``ticket-alice`` truncated to 100 characters.
+    """
     slug = re.sub(r"[^a-z0-9-]+", "-", member.name.lower()).strip("-") or str(member.id)
     return f"ticket-{slug}"[:100]
 
 
 class TicketManager:
+    """Discord-side ticket lifecycle used by views and the tickets cog.
+
+    Args:
+        bot: Parent ``JoltBot`` (provides ``db`` and issue reporting).
+    """
+
     def __init__(self, bot: JoltBot) -> None:
         self.bot = bot
         # Ticket IDs this process is currently working on. recover() leaves these alone.
@@ -120,6 +134,14 @@ class TicketManager:
     # ------------------------------------------------------------------ open
 
     async def active_ticket_for(self, member: discord.Member) -> Ticket | None:
+        """Return the member's active ticket, or close one whose channel vanished.
+
+        Args:
+            member: Applicant in a guild.
+
+        Returns:
+            Open/closing ticket, or ``None`` if none / orphan channel was claimed.
+        """
         ticket = await store.get_active_by_user(self.db, member.guild.id, member.id)
         if (
             ticket
@@ -136,7 +158,19 @@ class TicketManager:
     async def create_ticket(
         self, member: discord.Member, ctx: TicketContext, answers: list[dict[str, str]]
     ) -> tuple[discord.TextChannel | None, str | None]:
-        """Returns (channel, None) on success, or (None, a message for the applicant)."""
+        """Reserve a row, create the private channel, and post the application.
+
+        Rolls back the reservation if channel creation fails so the applicant
+        is never stuck with "being created".
+
+        Args:
+            member: Applicant.
+            ctx: Fresh guild ticket context (must be ``ready``).
+            answers: Submitted form answers.
+
+        Returns:
+            ``(channel, None)`` on success, or ``(None, error_message)`` for the applicant.
+        """
         guild = member.guild
         category = guild.get_channel(ctx.settings.ticket_category_id or 0)
         if not isinstance(category, discord.CategoryChannel):
@@ -219,7 +253,20 @@ class TicketManager:
     async def accept(
         self, guild: discord.Guild, staff: discord.Member, ticket: Ticket, extra_role: discord.Role | None
     ) -> str | None:
-        """Returns None on success, or an error message for the staff member."""
+        """Claim the ticket, grant accept roles, DM welcome, then finalize.
+
+        Roles are added before pending is removed so a partial failure leaves
+        the member with access rather than locked out.
+
+        Args:
+            guild: Guild owning the ticket.
+            staff: Staff member who confirmed Accept.
+            ticket: Open ticket row.
+            extra_role: Optional extra role chosen on Accept.
+
+        Returns:
+            ``None`` on success, or an error message for the staff member.
+        """
         ctx = await load_context(self.bot, guild.id)
         member = await self._get_member(guild, ticket.user_id)
         if member is None:
@@ -269,6 +316,21 @@ class TicketManager:
     async def deny(
         self, guild: discord.Guild, staff: discord.Member, ticket: Ticket, reason: str, kick: bool
     ) -> str | None:
+        """Claim the ticket, optionally kick, DM the deny reason, then finalize.
+
+        The deny DM is sent before a kick so Discord still shares a guild with
+        the applicant (DMs are more reliable that way).
+
+        Args:
+            guild: Guild owning the ticket.
+            staff: Staff member who confirmed Deny.
+            ticket: Open ticket row.
+            reason: Deny reason shown in the DM / log.
+            kick: If True, kick after the DM when hierarchy allows.
+
+        Returns:
+            ``None`` on success, or an error message for the staff member.
+        """
         ctx = await load_context(self.bot, guild.id)
         member = await self._get_member(guild, ticket.user_id)
         if kick and member is not None and (problem := kick_problem(guild, member)):
@@ -311,6 +373,15 @@ class TicketManager:
         return None
 
     async def close(self, staff: discord.Member, ticket: Ticket) -> str | None:
+        """Claim the ticket with outcome ``closed`` (no role changes) and finalize.
+
+        Args:
+            staff: Staff member who confirmed Close.
+            ticket: Open ticket row.
+
+        Returns:
+            ``None`` on success, or an error if already claimed.
+        """
         if not await store.claim(self.db, ticket.id, outcome="closed", handled_by=staff.id):
             return "Someone else already handled this ticket."
         log.info("Guild %s: ticket #%s closed by %s", ticket.guild_id, ticket.id, staff.id)
@@ -320,12 +391,23 @@ class TicketManager:
     # ------------------------------------------------------------------ automatic closes
 
     async def handle_member_left(self, guild_id: int, user_id: int) -> None:
+        """Auto-close an active ticket when the applicant leaves the guild.
+
+        Args:
+            guild_id: Discord guild snowflake.
+            user_id: Member who left.
+        """
         ticket = await store.get_active_by_user(self.db, guild_id, user_id)
         if ticket and await store.claim(self.db, ticket.id, outcome="left", handled_by=None):
             log.info("Guild %s: applicant %s left; auto-closing ticket #%s", guild_id, user_id, ticket.id)
             self._spawn(self.finalize(ticket.id))
 
     async def handle_channel_deleted(self, channel_id: int) -> None:
+        """React when a ticket channel is deleted outside the normal finalize path.
+
+        Args:
+            channel_id: Deleted Discord channel snowflake.
+        """
         ticket = await store.get_by_channel(self.db, channel_id)
         if ticket is None:
             return
@@ -339,10 +421,15 @@ class TicketManager:
     # ------------------------------------------------------------------ finalize
 
     async def finalize(self, ticket_id: int, *, resumed: bool = False) -> None:
-        """Transcript -> log channel -> mark closed -> delete the channel after a delay.
+        """Transcript → log channel → mark closed → delete the channel after a delay.
 
+        Does not delete the channel if the log post failed (preserve evidence).
         Safe to call more than once. If anything unexpected goes wrong, the
-        ticket stays 'closing' and recover() retries it a few minutes later.
+        ticket stays ``closing`` and ``recover()`` retries it a few minutes later.
+
+        Args:
+            ticket_id: Ticket primary key already in ``closing`` (or to resume).
+            resumed: True when recovery is finishing a previously stuck ticket.
         """
         if ticket_id in self._busy:
             return
@@ -517,8 +604,12 @@ class TicketManager:
     async def recover(self, guild: discord.Guild) -> None:
         """Bring the database and Discord back in sync for one guild.
 
-        Runs at startup AND every few minutes, so nothing stays stuck until the
-        next restart (the old bot only did this at startup).
+        Runs at startup and every few minutes, so nothing stays stuck until the
+        next restart (the old bot only did this at startup). Skips tickets in
+        ``_busy`` that this process is already finalizing.
+
+        Args:
+            guild: Connected, available Discord guild.
         """
         if guild.unavailable:
             return

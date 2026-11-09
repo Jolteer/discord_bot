@@ -29,7 +29,15 @@ log = logging.getLogger("joltbot.bot")
 
 
 async def check_database(url: str) -> str | None:
-    """None if the schema is current, otherwise what to do about it."""
+    """Verify the DB is at Alembic head before connecting to Discord.
+
+    Args:
+        url: SQLAlchemy database URL.
+
+    Returns:
+        ``None`` if the schema is current; otherwise a human-readable problem
+        string suitable for a critical log line.
+    """
     db = Database(url)
     try:
         return await schema_problem(db)
@@ -38,13 +46,25 @@ async def check_database(url: str) -> str | None:
 
 
 async def run_once() -> None:
-    """Run the bot until it disconnects for good or raises."""
+    """Run the bot until it disconnects cleanly or raises.
+
+    Raises:
+        discord.LoginFailure: Invalid token.
+        discord.PrivilegedIntentsRequired: Portal intents not enabled.
+        Exception: Other startup/runtime failures (caller may retry).
+    """
     bot = JoltBot(get_config())
     async with bot:
         await bot.start(get_config().discord_token)
 
 
 def main() -> None:
+    """CLI entry: validate setup, then connect with forever-retry on transient errors.
+
+    Exit codes:
+        2 — Discord rejected the token (``EXIT_BAD_TOKEN``).
+        3 — Missing env / schema / privileged intents (``EXIT_BAD_SETUP``).
+    """
     config = get_config()
     setup_logging("bot", config.log_level, config.log_dir)
     if missing := config.missing("discord_token"):

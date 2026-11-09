@@ -29,7 +29,15 @@ TAILWIND_CDN = "https://cdn.jsdelivr.net"
 
 
 def content_security_policy(allow_cdn: bool) -> str:
-    """The CSP header value; allow_cdn adds the Tailwind CDN to script-src."""
+    """Build the Content-Security-Policy header value.
+
+    Args:
+        allow_cdn: When True (no built ``app.css``), allow the pinned Tailwind CDN
+            in ``script-src``. Production builds drop the CDN entirely.
+
+    Returns:
+        CSP header string applied by middleware on every response.
+    """
     scripts = f"'self' {TAILWIND_CDN}" if allow_cdn else "'self'"
     # fonts.googleapis.com serves the CSS; fonts.gstatic.com serves the font files.
     styles = "'self' 'unsafe-inline' https://fonts.googleapis.com"
@@ -51,7 +59,20 @@ def create_app(
     *,
     check_schema: bool = True,
 ) -> FastAPI:
-    """Build the dashboard app. Anything not passed in is created from the environment."""
+    """Build the dashboard app (lifespan, routers, static, security headers).
+
+    Args:
+        config: Optional prebuilt settings (tests inject fakes).
+        db: Optional database (defaults from ``DATABASE_URL``).
+        discord: Optional Discord REST client (tests inject fakes).
+        check_schema: When True, refuse to start if Alembic is not at head.
+
+    Returns:
+        Configured ``FastAPI`` application.
+
+    Raises:
+        RuntimeError: Missing required env vars or schema mismatch (at lifespan start).
+    """
     config = config or get_config()
     db = db or Database(config.database_url)
     discord = discord or DiscordClient(

@@ -1,3 +1,5 @@
+"""Tests for safe {placeholder} rendering in admin-authored messages."""
+
 from joltbot.core.templating import placeholders_in, render
 
 

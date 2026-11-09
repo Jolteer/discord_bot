@@ -60,6 +60,16 @@ class GrantConfirmView(discord.ui.View):
 @app_commands.guild_only()
 @app_commands.default_permissions(manage_guild=True)  # hidden from regular members by default
 class Tickets(commands.GroupCog, group_name="tickets", group_description="Ticket and verification tools"):
+    """Slash group ``/tickets`` plus join/leave listeners and recovery.
+
+    Permissions:
+        Discord hides the group from members without Manage Server by default.
+        Runtime checks also allow configured staff roles (``_setup_check``).
+
+    Cooldowns:
+        None on slash commands. ``grant-existing`` is serialized per guild via a lock.
+    """
+
     def __init__(self, bot: JoltBot) -> None:
         self.bot = bot
         self._grant_locks: dict[int, asyncio.Lock] = {}
@@ -180,6 +190,17 @@ class Tickets(commands.GroupCog, group_name="tickets", group_description="Ticket
     @app_commands.command(name="panel", description="Post (or re-post) the application panel in the panel channel.")
     @app_commands.check(_setup_check)
     async def panel(self, interaction: discord.Interaction) -> None:
+        """Post or replace the application panel in the configured panel channel.
+
+        Who can use it:
+            Manage Server, or a configured staff role (see ``_setup_check``).
+
+        Example:
+            ``/tickets panel``
+
+        Args:
+            interaction: Slash interaction in a guild.
+        """
         guild = interaction.guild
         assert guild is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -261,6 +282,17 @@ class Tickets(commands.GroupCog, group_name="tickets", group_description="Ticket
     @app_commands.command(name="diagnostics", description="Check JoltBot's permissions, role order and ticket setup.")
     @app_commands.check(_setup_check)
     async def diagnostics(self, interaction: discord.Interaction) -> None:
+        """Run a permission and setup self-check; reply ephemerally with findings.
+
+        Who can use it:
+            Manage Server, or a configured staff role.
+
+        Example:
+            ``/tickets diagnostics``
+
+        Args:
+            interaction: Slash interaction in a guild.
+        """
         assert interaction.guild is not None
         ctx = await load_context(self.bot, interaction.guild.id)
         findings = run_diagnostics(interaction.guild, ctx.settings, ctx.enabled)
@@ -281,6 +313,21 @@ class Tickets(commands.GroupCog, group_name="tickets", group_description="Ticket
     )
     @app_commands.check(_setup_check)
     async def grant_existing(self, interaction: discord.Interaction) -> None:
+        """Bulk-grant accept roles to members who lack accept and pending roles.
+
+        Who can use it:
+            Manage Server, or a configured staff role. Asks for a confirm button
+            before running. Only one grant runs per guild at a time.
+
+        Example:
+            ``/tickets grant-existing`` then click **Give them the role(s)**.
+
+        Cooldown / concurrency:
+            No Discord cooldown; a per-guild ``asyncio.Lock`` blocks overlapping runs.
+
+        Args:
+            interaction: Slash interaction in a guild.
+        """
         guild = interaction.guild
         assert guild is not None
         ctx = await load_context(self.bot, guild.id)
@@ -342,4 +389,9 @@ class Tickets(commands.GroupCog, group_name="tickets", group_description="Ticket
 
 
 async def setup(bot: JoltBot) -> None:
+    """discord.py extension entry point for the tickets cog.
+
+    Args:
+        bot: The running ``JoltBot`` instance.
+    """
     await bot.add_cog(Tickets(bot))

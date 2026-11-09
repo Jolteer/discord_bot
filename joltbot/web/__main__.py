@@ -16,6 +16,11 @@ from ..core.logsetup import setup_logging
 
 
 def main() -> None:
+    """CLI entry: run uvicorn with factory ``joltbot.web.app:create_app``.
+
+    Host/port come from ``HOST``/``PORT`` unless overridden by ``--host``/``--port``.
+    ``--reload`` is for local development only.
+    """
     config = get_config()
     parser = argparse.ArgumentParser(description="Run the JoltBot dashboard")
     parser.add_argument("--host", default=config.host)

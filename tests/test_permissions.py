@@ -1,3 +1,5 @@
+"""Tests for invite permission bits and Manage Server checks."""
+
 from urllib.parse import parse_qs, urlparse
 
 from joltbot.core.permissions import (

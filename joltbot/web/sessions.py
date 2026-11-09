@@ -28,13 +28,37 @@ GUILD_LIST_MAX_AGE = timedelta(minutes=5)
 
 
 def hash_token(secret: str, raw_token: str) -> str:
+    """HMAC-SHA256 the cookie token for storage as ``web_sessions.id``.
+
+    Args:
+        secret: ``SESSION_SECRET``.
+        raw_token: Opaque value placed in the browser cookie.
+
+    Returns:
+        Hex digest used as the primary key (DB leak ≠ login).
+    """
     return hmac.new(secret.encode(), raw_token.encode(), hashlib.sha256).hexdigest()
 
 
 async def create_session(
     db: Database, secret: str, *, user: dict[str, Any], access_token: str, expires_in: int, guilds: list[dict[str, Any]]
 ) -> str:
-    """Store a new session and return the raw token for the cookie."""
+    """Store a new session and return the raw token for the cookie.
+
+    Session lifetime is ``min(7 days, Discord token expires_in)`` because there
+    is no refresh-token flow.
+
+    Args:
+        db: Shared database.
+        secret: ``SESSION_SECRET`` for hashing the cookie token.
+        user: Discord ``/users/@me`` payload.
+        access_token: Discord OAuth access token (stored plaintext for guild list refresh).
+        expires_in: Seconds until the Discord token expires.
+        guilds: Initial guild list from Discord.
+
+    Returns:
+        Raw cookie token (never store this in the DB).
+    """
     raw = secrets.token_urlsafe(32)
     now = utcnow()
     async with db.session() as session, session.begin():
@@ -58,6 +82,16 @@ async def create_session(
 
 
 async def load_session(db: Database, secret: str, raw_token: str | None) -> WebSession | None:
+    """Resolve a cookie token to a non-expired ``WebSession`` row.
+
+    Args:
+        db: Shared database.
+        secret: ``SESSION_SECRET``.
+        raw_token: Cookie value, or None if missing.
+
+    Returns:
+        Session row, or ``None`` if missing/expired/invalid.
+    """
     if not raw_token or len(raw_token) > 200:
         return None
     async with db.session() as session:
@@ -68,15 +102,30 @@ async def load_session(db: Database, secret: str, raw_token: str | None) -> WebS
 
 
 async def delete_session(db: Database, session_id: str) -> None:
+    """Delete a session row (logout / revoked Discord login).
+
+    Args:
+        db: Shared database.
+        session_id: Hashed session id (``WebSession.id``).
+    """
     async with db.session() as session, session.begin():
         await session.execute(delete(WebSession).where(WebSession.id == session_id))
 
 
 async def user_guilds(db: Database, discord: DiscordClient, ws: WebSession) -> list[dict[str, Any]]:
-    """The user's servers from Discord, re-fetched when the cache is older than 5 minutes.
+    """Return the user's Discord guild list, refreshing when the cache is stale.
 
-    Raises DiscordUnauthorized if their Discord login was revoked. If Discord
-    is just slow or rate limiting, the cached list is used instead.
+    Args:
+        db: Shared database (updates ``guilds_cache`` on success).
+        discord: REST client used with the stored access token.
+        ws: Current web session.
+
+    Returns:
+        Raw Discord guild objects (dicts).
+
+    Raises:
+        DiscordUnauthorized: Discord login was revoked (caller should delete session).
+        DiscordError: Discord failed and no cache is available to fall back on.
     """
     fresh_enough = ws.guilds_fetched_at and utcnow() - ws.guilds_fetched_at < GUILD_LIST_MAX_AGE
     if fresh_enough and ws.guilds_cache is not None:

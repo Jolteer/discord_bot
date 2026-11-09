@@ -1,3 +1,5 @@
+"""Tests for TicketSettings validation, snowflake JSON, and setup_problems."""
+
 import pytest
 from pydantic import ValidationError
 

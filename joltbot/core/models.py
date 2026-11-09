@@ -210,6 +210,9 @@ class WebSession(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     username: Mapped[str] = mapped_column(String(100))
     avatar: Mapped[str | None] = mapped_column(String(64))
+    # TODO: OAuth access tokens are stored plaintext so the dashboard can refresh
+    # the guild list. A DB leak lets an attacker call Discord as that user for
+    # identify/guilds until the token expires. Consider encrypting at rest.
     access_token: Mapped[str] = mapped_column(Text)
     token_expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
     # The user's server list from Discord, cached because that endpoint is heavily rate-limited.

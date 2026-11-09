@@ -142,12 +142,22 @@ class DiscordClient:
     # ------------------------------------------------------------------ OAuth2 (as the user)
 
     def authorize_url(self, state: str) -> str:
+        """Build Discord's OAuth authorize URL for dashboard login.
+
+        Args:
+            state: One-time CSRF value also stored in the short-lived state cookie.
+
+        Returns:
+            Full authorize URL including ``identify guilds`` scopes.
+        """
         params = {
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
             "response_type": "code",
             "scope": OAUTH_SCOPES,
             "state": state,
+            # TODO: prompt=none skips the consent screen; first-time or revoked users
+            # may get opaque Discord errors instead of a re-consent UI.
             "prompt": "none",  # don't ask again if they already approved JoltBot
         }
         return f"{AUTHORIZE_URL}?{urlencode(params)}"

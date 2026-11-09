@@ -2,12 +2,6 @@
 
 A Discord bot that any server can invite, with a web dashboard where server admins log in with Discord and manage JoltBot for their own server.
 
-The first module is **Tickets & verification**:
-1. New members click **Open Application** and answer the server's own questions.
-2. A private ticket channel opens for them.
-3. Staff **Accept**, **Deny** or **Close** it with one click.
-4. Every ticket's transcript, files and decision are saved to a log channel.
-
 JoltBot runs as **two processes** that share one SQLite database:
 
 | Process | Start with | What it does |
@@ -16,6 +10,52 @@ JoltBot runs as **two processes** that share one SQLite database:
 | Dashboard | `python -m joltbot.web` | Website on port 8000: login, server list, settings pages, `/health` |
 
 > **Deploying:** Docker Compose is the main way to run JoltBot in production (section 7). The systemd setup in section 7.4 is kept as a fallback for running without Docker.
+
+**Also see:** [CONTRIBUTING.md](CONTRIBUTING.md) (style, PRs, adding modules) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (startup, routing, storage)
+
+---
+
+## Features
+
+- **Multi-server bot** with per-guild settings stored in SQLite (no restart to apply dashboard changes)
+- **Web dashboard** — Discord OAuth login, server picker, module settings, audit log, dismissible bot issues
+- **Tickets & verification**
+  1. New members click **Open Application** and answer the server's own questions (up to 5)
+  2. A private ticket channel opens for them
+  3. Staff **Accept**, **Deny** (keep or kick), or **Close** with buttons
+  4. Transcript, optional attachment re-upload, and decision go to a log channel; then the ticket channel is deleted
+- **Recovery** — stuck tickets and unfinished closes resume every 5 minutes and at startup
+- **Diagnostics** — `/tickets diagnostics` checks permissions, role hierarchy, and channel visibility
+- **Docker Compose** deploy (migrate → bot + web; optional Caddy HTTPS) and a systemd fallback
+- **Legacy KOC Gatekeeper migration** — one-shot import of old config and open tickets
+
+---
+
+## Commands
+
+All slash commands are under `/tickets`, **guild only**. Discord hides them from members without **Manage Server** by default (`default_permissions`). Members with a configured **staff role** can also run them once they can see the commands (Server Settings → Integrations → JoltBot to grant visibility). No command cooldowns.
+
+| Command | Arguments | Who can use it | What it does |
+|---|---|---|---|
+| `/tickets panel` | none | Manage Server **or** staff role | Posts (or re-posts) the application panel in the configured panel channel, pins it when possible, and records the message ID so only one panel exists |
+| `/tickets diagnostics` | none | Manage Server **or** staff role | Ephemeral report of bot permissions, role order, category limits, and setup gaps |
+| `/tickets grant-existing` | none (confirm button) | Manage Server **or** staff role | One-time bulk: give accept role(s) to members who have neither accept nor pending roles |
+
+**UI (not slash commands):** panel **Open Application** (anyone eligible); ticket **Accept** / **Deny** / **Close** (staff). Confirmations are ephemeral.
+
+---
+
+## Tech stack
+
+| Layer | Tech |
+|---|---|
+| Bot | Python 3.10+ (3.12 recommended), discord.py 2.x |
+| Dashboard | FastAPI, uvicorn, Jinja2, htmx, Tailwind CSS |
+| Data | SQLAlchemy 2 async + aiosqlite (SQLite WAL); Alembic migrations |
+| Config | pydantic-settings from environment / `.env` |
+| Deploy | Docker Compose; optional Caddy |
+
+Pinned deps: [`requirements.txt`](requirements.txt). Full lock: `requirements.lock`.
 
 ---
 
@@ -57,9 +97,11 @@ joltbot/
 └── web/                  # dashboard process: app, routes/, login, security checks, templates, static files
 migrations/               # Alembic database migrations
 scripts/migrate_koc.py    # one-time King of Chaos migration
+docs/ARCHITECTURE.md      # startup, routing, storage, external APIs
 deploy/Caddyfile          # HTTPS proxy for Docker Compose
 deploy/systemd/           # fallback: systemd units + Caddyfile for running without Docker
 tests/
+CONTRIBUTING.md           # style, PRs, how to add a module
 Dockerfile, docker-compose.yml, .dockerignore
 requirements.txt          # direct dependencies, exact versions (edit this one)
 requirements.lock         # every dependency, exact versions (generated; used by Docker and CI)
@@ -453,35 +495,16 @@ Put both lines in a small script and run it nightly with cron. Each server's log
 
 ## 11. How it works (for contributors)
 
-- **Per-server settings.**
-  - Each module has a Pydantic settings model with defaults for every field (e.g. `modules/tickets/settings.py`). It's stored as JSON in `module_settings`, one row per server per module.
-  - A server with nothing configured just gets the defaults, with the module switched **off**.
-- **Live changes.** The bot reads settings from the database on every event, so dashboard changes apply instantly with no restart and no cache.
-- **Safety checks on every dashboard page.** `web/security.py: guild_access` re-checks with Discord that the logged-in user is the owner, an Administrator or has Manage Server in **that** server.
-  - The user's server list is cached for 5 minutes.
-  - The server ID comes only from the URL. Role and channel IDs in forms must belong to that server (`modules/tickets/forms.py: foreign_id_errors`).
-- **Sessions and CSRF.**
-  - The cookie holds a random token; the database stores only an HMAC-SHA256 of it, so a leaked database can't be used to log in.
-  - The user's **Discord OAuth access token** is stored as-is in `web_sessions` (needed to re-check their server list). It only has the `identify guilds` scopes, so it can read their name and server list and nothing else, and it expires within 7 days. Logging out deletes it.
-  - Every POST needs the session's CSRF token, and is rejected if it comes from another website's Origin.
-  - The OAuth `state` is random, stored in a 10-minute cookie, and single use.
-- **Reliability.**
-  - The bot retries startup errors itself.
-  - Ticket recovery runs every 5 minutes, not just at startup.
-  - Any failure after a ticket is claimed releases the claim.
-  - Problems with nobody to report them to are saved as "issues" and shown on the dashboard.
-- **One dashboard process.** uvicorn runs a single worker on purpose: the Discord role/channel cache lives in memory, and one async worker easily handles a dashboard's traffic.
-- **Adding a module (e.g. auto-roles):**
-  1. Create `joltbot/modules/autoroles/` with `settings.py`, plus `cog.py`, `web.py` and `templates/autoroles/` as needed.
-  2. Add one entry to `modules/registry.py`.
-  - The bot loads the cog, and the dashboard adds the page to the sidebar.
-- **Changing the database:**
-  1. Edit `core/models.py`.
-  2. Run `alembic revision --autogenerate -m "what changed"`.
-  3. Review the new file in `migrations/versions/`, then commit it.
-  - A test fails if models and migrations ever disagree.
-  - Deploys apply it automatically through the `migrate` service.
-- **Moving to Postgres later** (needed for hosts like Render/Railway):
-  1. Add `asyncpg` to `requirements.txt` and regenerate the lock.
-  2. Set `DATABASE_URL=postgresql+asyncpg://…`, add a `postgres` service to `docker-compose.yml`, and run the migrations.
-  - The models already support Postgres, but it hasn't been tested yet.
+Full write-up: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**. How to branch, style, and add a module: **[CONTRIBUTING.md](CONTRIBUTING.md)**.
+
+Short version:
+
+- **Per-server settings.** Each module has a Pydantic model with defaults (e.g. `modules/tickets/settings.py`), stored as JSON in `module_settings`. Unconfigured servers get defaults with the module **off**.
+- **Live changes.** The bot reads settings from the DB on every event — no restart, no settings cache.
+- **Dashboard access.** `web/security.py` checks Manage Server / Admin / owner with Discord before any guild DB lookup. Guild list cached 5 minutes. Role/channel IDs in forms must belong to that server.
+- **Sessions and CSRF.** Cookie is opaque; DB stores HMAC of it. Discord OAuth access token is stored on the session (scopes `identify guilds` only). POSTs need CSRF; Origin must match when present.
+- **Reliability.** Bot startup retries; ticket recovery every 5 minutes; claim/release; dashboard "issues" for problems with no interaction to reply on.
+- **One dashboard worker.** In-memory Discord caches; single uvicorn worker by design.
+- **Adding a module:** package under `joltbot/modules/<name>/` + one `ModuleInfo` in `modules/registry.py` (see CONTRIBUTING).
+- **Schema changes:** edit `core/models.py` → `alembic revision --autogenerate` → review → commit. Deploys run `migrate` automatically.
+- **Postgres later** (for multi-host PaaS): add `asyncpg`, point `DATABASE_URL` at Postgres. Models already support it, but it **hasn't been tested yet**.

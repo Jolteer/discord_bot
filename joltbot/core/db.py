@@ -3,6 +3,9 @@
 Both processes open the same SQLite file. SQLite's WAL mode lets one process
 write while the other reads. To switch to Postgres later, change DATABASE_URL
 (and `pip install asyncpg`); nothing else here needs to change.
+
+TODO: Postgres (``postgresql+asyncpg://…``) is supported by the models/dialect
+variants but has not been integration-tested yet.
 """
 
 from __future__ import annotations
@@ -33,6 +36,12 @@ def _sqlite_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
 
 
 class Database:
+    """Async SQLAlchemy engine wrapper shared by the bot and dashboard.
+
+    Args:
+        url: SQLAlchemy URL (default SQLite via ``DATABASE_URL``).
+    """
+
     def __init__(self, url: str) -> None:
         parsed = make_url(url)
         if parsed.get_backend_name() == "sqlite" and parsed.database not in (None, "", ":memory:"):
@@ -48,15 +57,25 @@ class Database:
         self._sessions = async_sessionmaker(self.engine, expire_on_commit=False)
 
     def session(self) -> AsyncSession:
-        """Use as ``async with db.session() as session:``. Each session has its own
-        connection and transaction, so concurrent bot events never share one."""
+        """Open a short-lived session for one unit of work.
+
+        Use as ``async with db.session() as session:``. Each session has its own
+        connection and transaction, so concurrent bot events never share one.
+
+        Returns:
+            A new ``AsyncSession``.
+        """
         return self._sessions()
 
     async def create_all(self) -> None:
-        """Create tables directly from the models. Used by tests; real deployments
-        use Alembic (`alembic upgrade head`) so schema changes are tracked."""
+        """Create tables from the ORM models.
+
+        Used by tests only. Real deployments use Alembic
+        (``alembic upgrade head``) so schema changes are tracked.
+        """
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
     async def dispose(self) -> None:
+        """Close the engine and release connection-pool resources."""
         await self.engine.dispose()

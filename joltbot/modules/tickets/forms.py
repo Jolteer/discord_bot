@@ -63,9 +63,16 @@ def _ids(form: Any, name: str) -> list[str]:
 
 
 def parse_form(form: Any) -> dict[str, Any]:
-    """Form fields -> a plain dict with the same shape as TicketSettings (IDs as strings).
+    """Map HTML form fields to a dict shaped like ``TicketSettings`` (IDs as strings).
 
-    Checkboxes that aren't ticked aren't sent by the browser at all, hence `name in form`.
+    Checkboxes that aren't ticked aren't sent by the browser at all, hence
+    ``name in form``.
+
+    Args:
+        form: Starlette form data (supports ``get`` / ``getlist``).
+
+    Returns:
+        Unvalidated settings dict ready for ``TicketSettings.model_validate``.
     """
     questions = []
     for i in range(MAX_QUESTIONS):
@@ -114,7 +121,14 @@ def parse_form(form: Any) -> dict[str, Any]:
 
 
 def validation_errors(exc: ValidationError) -> list[str]:
-    """Pydantic errors -> short sentences an admin can act on."""
+    """Turn Pydantic errors into short sentences an admin can act on.
+
+    Args:
+        exc: Validation failure from ``TicketSettings.model_validate``.
+
+    Returns:
+        Human-readable error lines for the settings form.
+    """
     errors = []
     for err in exc.errors():
         loc = [str(part) for part in err["loc"]]
@@ -131,10 +145,17 @@ def validation_errors(exc: ValidationError) -> list[str]:
 
 
 def foreign_id_errors(settings: TicketSettings, data: GuildData) -> list[str]:
-    """Every role/channel ID must belong to THIS server.
+    """Ensure every role/channel ID belongs to this server.
 
     Without this check an admin could paste IDs from another server into the
     form, and e.g. JoltBot would post this server's transcripts there.
+
+    Args:
+        settings: Candidate ticket settings from the form.
+        data: Live roles/channels for ``access.guild_id``.
+
+    Returns:
+        Error lines naming fields whose IDs are foreign or missing.
     """
     errors = []
     roles = {r.id: r for r in data.roles}
@@ -181,7 +202,15 @@ NEEDED_PERMISSIONS = [
 
 
 def setup_warnings(settings: TicketSettings, data: GuildData) -> list[str]:
-    """Problems we can see from the dashboard: missing permissions, role order, deleted channels."""
+    """Soft problems visible from the dashboard (perms, hierarchy, deleted channels).
+
+    Args:
+        settings: Current or candidate ticket settings.
+        data: Live Discord guild snapshot.
+
+    Returns:
+        Warning lines shown above the form (non-blocking).
+    """
     warnings = []
     perms = data.bot_permissions()
     if not perms & ADMINISTRATOR:

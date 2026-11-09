@@ -15,5 +15,9 @@ class ModuleSettingsModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     def setup_problems(self) -> list[str]:
-        """Plain-language reasons the module can't be turned on yet. Empty = ready."""
+        """Plain-language reasons the module can't be turned on yet.
+
+        Returns:
+            Blocking problem strings; empty means the module is ready to enable.
+        """
         return []

@@ -19,7 +19,15 @@ ALIASES = {"guild": "server"}
 
 
 def render(template: str, **values: object) -> str:
-    """Replace known {names}; unknown ones are left untouched."""
+    """Replace known ``{names}``; unknown ones and stray braces are left alone.
+
+    Args:
+        template: Admin-authored message text from settings.
+        **values: Placeholder values (e.g. ``user=``, ``server=``).
+
+    Returns:
+        Rendered string safe for Discord sends.
+    """
 
     def replace(match: re.Match[str]) -> str:
         name = ALIASES.get(match.group(1), match.group(1))
@@ -31,5 +39,12 @@ def render(template: str, **values: object) -> str:
 
 
 def placeholders_in(template: str) -> set[str]:
-    """Names used in a template (after aliasing). Handy for validation."""
+    """Names used in a template (after aliasing). Handy for validation.
+
+    Args:
+        template: Message text that may contain ``{placeholders}``.
+
+    Returns:
+        Set of canonical placeholder names (``guild`` → ``server``).
+    """
     return {ALIASES.get(name, name) for name in _PLACEHOLDER.findall(template)}

@@ -17,6 +17,18 @@ from .tickets.settings import TicketSettings
 
 @dataclass(frozen=True)
 class ModuleInfo:
+    """One feature module known to both the bot and the dashboard.
+
+    Attributes:
+        name: Database key; never rename once released.
+        title: Human label for the sidebar / overview.
+        description: Short blurb for the overview page.
+        settings_model: Pydantic model with defaults for every field.
+        toggleable: False = always on (e.g. general settings).
+        cog: Dotted bot extension path, or None if dashboard-only.
+        web: Dotted module exporting FastAPI ``router``, or None if bot-only.
+    """
+
     name: str  # stored in the database; never rename once released
     title: str
     description: str
@@ -50,10 +62,21 @@ MODULES: dict[str, ModuleInfo] = {
 
 
 class UnknownModule(KeyError):
-    pass
+    """Raised when ``get_module`` is called with a name not in ``MODULES``."""
 
 
 def get_module(name: str) -> ModuleInfo:
+    """Look up a registered module by name.
+
+    Args:
+        name: Registry key (e.g. ``"tickets"``).
+
+    Returns:
+        The matching ``ModuleInfo``.
+
+    Raises:
+        UnknownModule: ``name`` is not registered.
+    """
     try:
         return MODULES[name]
     except KeyError:

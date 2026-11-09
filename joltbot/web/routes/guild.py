@@ -25,7 +25,15 @@ AUDIT_PAGE_SIZE = 50
 
 
 def guild_context(access: GuildAccess, active: str) -> dict[str, Any]:
-    """Data every per-server page needs for the header and sidebar."""
+    """Build template context shared by every per-server page.
+
+    Args:
+        access: Proven guild manager access.
+        active: Sidebar highlight key (e.g. ``"overview"``, ``"tickets"``).
+
+    Returns:
+        Dict with ``guild`` display fields and ``active``.
+    """
     return {
         "guild": {
             "id": str(access.guild_id),
@@ -39,6 +47,15 @@ def guild_context(access: GuildAccess, active: str) -> dict[str, Any]:
 
 @router.get("")
 async def overview(request: Request, access: RequireGuild):
+    """Guild overview: module status, setup problems, and open issues.
+
+    Args:
+        request: Incoming HTTP request.
+        access: Authenticated guild manager.
+
+    Returns:
+        HTML for ``guild/overview.html``.
+    """
     async with get_db(request).session() as session:
         states = await load_all(session, access.guild_id)
         issues = await list_issues(session, access.guild_id)

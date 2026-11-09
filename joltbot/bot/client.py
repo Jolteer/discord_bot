@@ -30,7 +30,15 @@ COMMANDS_HASH_KEY = "commands_hash"
 
 
 class Tree(app_commands.CommandTree):
+    """Command tree that turns check/permission failures into ephemeral replies."""
+
     async def on_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
+        """Reply ephemerally to slash failures; log unexpected errors.
+
+        Args:
+            interaction: The failed slash interaction.
+            error: Raised by discord.py's app command layer.
+        """
         if isinstance(error, app_commands.CheckFailure):
             message = str(error) or "You can't use this command."
         elif isinstance(error, app_commands.BotMissingPermissions):
@@ -48,6 +56,17 @@ class Tree(app_commands.CommandTree):
 
 
 class JoltBot(commands.Bot):
+    """Discord bot process: privileged intents, module cogs, slash sync, issues.
+
+    Args:
+        config: Process settings (token is passed separately to ``start``).
+
+    Attributes:
+        tickets: Set by the tickets cog on load; ticket lifecycle entry point.
+        config: Shared ``AppConfig``.
+        db: Shared ``Database`` for this process.
+    """
+
     tickets: TicketManager  # set by the tickets cog when it loads
 
     def __init__(self, config: AppConfig) -> None:
@@ -68,6 +87,7 @@ class JoltBot(commands.Bot):
         self._background: set[asyncio.Task] = set()
 
     async def setup_hook(self) -> None:
+        """Load guild_sync + module cogs; start background slash sync with retry."""
         await self.load_extension("joltbot.bot.guild_sync")
         for module in MODULES.values():
             if module.cog:
@@ -92,7 +112,15 @@ class JoltBot(commands.Bot):
                 delay = min(delay * 2, 900)
 
     async def sync_commands(self) -> None:
-        """Register global slash commands, but only when they changed (Discord rate-limits this)."""
+        """Register global slash commands only when the payload hash changed.
+
+        Also clears legacy per-guild commands when ``bot_meta.clear_guild_commands``
+        is set (KOC migration). Discord rate-limits blank syncs, so unchanged
+        trees are skipped via ``commands_hash``.
+
+        Raises:
+            discord.HTTPException: Propagated from ``tree.sync`` (caller retries).
+        """
         payload = [cmd.to_dict(self.tree) for cmd in self.tree.get_commands()]
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         async with self.db.session() as session:
@@ -120,7 +148,13 @@ class JoltBot(commands.Bot):
     # ------------------------------------------------------------------ issues
 
     async def report_issue(self, guild_id: int, key: str, message: str) -> None:
-        """Record a problem for the server's admins (shown on the dashboard) and log it."""
+        """Record a problem for the server's admins (dashboard) and log a warning.
+
+        Args:
+            guild_id: Affected Discord guild.
+            key: Stable issue key (e.g. ``tickets.pending_role``); upserts by key.
+            message: Human-readable text shown on the overview page.
+        """
         log.warning("Guild %s: %s", guild_id, message)
         try:
             async with self.db.session() as session, session.begin():
@@ -129,6 +163,12 @@ class JoltBot(commands.Bot):
             log.exception("Couldn't record issue %s for guild %s", key, guild_id)
 
     async def resolve_issue(self, guild_id: int, key: str) -> None:
+        """Clear a previously recorded guild issue if it still exists.
+
+        Args:
+            guild_id: Discord guild snowflake.
+            key: Same key used in ``report_issue``.
+        """
         try:
             async with self.db.session() as session, session.begin():
                 await clear_issue(session, guild_id, key)
@@ -136,5 +176,6 @@ class JoltBot(commands.Bot):
             log.exception("Couldn't clear issue %s for guild %s", key, guild_id)
 
     async def close(self) -> None:
+        """Disconnect from Discord and dispose the database engine."""
         await super().close()
         await self.db.dispose()

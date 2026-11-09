@@ -49,6 +49,16 @@ async def _render(
 
 @router.get("")
 async def show(request: Request, access: RequireGuild, saved: bool = False):
+    """Render the general settings page (embed colour + module toggles).
+
+    Args:
+        request: FastAPI request.
+        access: Authenticated guild manager (``RequireGuild``).
+        saved: Query flag to show the success banner after a redirect.
+
+    Returns:
+        HTML response for ``general/settings.html``.
+    """
     async with get_db(request).session() as session:
         states = await load_all(session, access.guild_id)
     return await _render(
@@ -64,6 +74,18 @@ async def show(request: Request, access: RequireGuild, saved: bool = False):
 
 @router.post("", dependencies=[CsrfProtected])
 async def save(request: Request, access: RequireGuild):
+    """Persist embed colour and module enable flags with optimistic concurrency.
+
+    Args:
+        request: FastAPI request (form body + CSRF).
+        access: Authenticated guild manager.
+
+    Returns:
+        Redirect to GET with ``?saved=1``, or the form with errors (400).
+
+    Raises:
+        Does not raise ``StaleSettingsError`` to the client; rendered as a form error.
+    """
     form = await request.form()
     color = str(form.get("embed_color", "")).strip()
     toggles = {name: f"enabled_{name}" in form for name, m in MODULES.items() if m.toggleable}

@@ -13,6 +13,14 @@ from .types import utcnow
 
 
 async def record_issue(session: AsyncSession, guild_id: int, key: str, message: str) -> None:
+    """Upsert a guild issue by ``(guild_id, key)``, bumping ``count`` on repeats.
+
+    Args:
+        session: Open async session (caller commits).
+        guild_id: Discord guild snowflake.
+        key: Stable machine key (e.g. ``tickets.pending_role``).
+        message: Latest human-readable text for the dashboard.
+    """
     if await session.get(Guild, guild_id) is None:
         return  # guild row not created yet; nothing to attach the issue to
     existing = (
@@ -29,10 +37,26 @@ async def record_issue(session: AsyncSession, guild_id: int, key: str, message: 
 
 
 async def clear_issue(session: AsyncSession, guild_id: int, key: str) -> None:
+    """Delete a guild issue if present.
+
+    Args:
+        session: Open async session (caller commits).
+        guild_id: Discord guild snowflake.
+        key: Issue key previously passed to ``record_issue``.
+    """
     await session.execute(delete(GuildIssue).where(GuildIssue.guild_id == guild_id, GuildIssue.key == key))
 
 
 async def list_issues(session: AsyncSession, guild_id: int) -> list[GuildIssue]:
+    """List open issues for a guild, newest activity first.
+
+    Args:
+        session: Open async session.
+        guild_id: Discord guild snowflake.
+
+    Returns:
+        ``GuildIssue`` rows for the overview page.
+    """
     result = await session.execute(
         select(GuildIssue).where(GuildIssue.guild_id == guild_id).order_by(GuildIssue.last_seen.desc())
     )

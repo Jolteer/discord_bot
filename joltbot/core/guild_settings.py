@@ -74,11 +74,30 @@ def _state_from_row(module: str, row: ModuleSetting | None) -> ModuleState[Any]:
 
 
 async def load_module(session: AsyncSession, guild_id: int, module: str) -> ModuleState[Any]:
+    """Load one module's settings for a guild (defaults if no row yet).
+
+    Args:
+        session: Open async session.
+        guild_id: Discord guild snowflake.
+        module: Registry module name (e.g. ``"tickets"``).
+
+    Returns:
+        ``ModuleState`` with validated config (or defaults if invalid/missing).
+    """
     row = await session.get(ModuleSetting, (guild_id, module), populate_existing=True)
     return _state_from_row(module, row)
 
 
 async def load_all(session: AsyncSession, guild_id: int) -> dict[str, ModuleState[Any]]:
+    """Load every registered module's settings for a guild.
+
+    Args:
+        session: Open async session.
+        guild_id: Discord guild snowflake.
+
+    Returns:
+        Mapping of module name → ``ModuleState``.
+    """
     result = await session.execute(select(ModuleSetting).where(ModuleSetting.guild_id == guild_id))
     rows = {row.module: row for row in result.scalars()}
     return {name: _state_from_row(name, rows.get(name)) for name in MODULES}
@@ -97,7 +116,17 @@ def _flatten(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
 
 
 def diff_settings(old: ModuleState[Any], enabled: bool, new_config: ModuleSettingsModel) -> dict[str, list[Any]]:
-    """{"field": [old, new]} for every value that changed."""
+    """Build an audit-friendly change map.
+
+    Args:
+        old: Previously loaded module state.
+        enabled: New enabled flag.
+        new_config: New validated settings model.
+
+    Returns:
+        ``{"field": [old, new], ...}`` for every value that changed (nested
+        keys flattened as ``messages.a``).
+    """
     changes: dict[str, list[Any]] = {}
     if old.enabled != enabled:
         changes["enabled"] = [old.enabled, enabled]
@@ -119,8 +148,27 @@ async def save_module(
     expected_version: int,
     actor: Actor,
 ) -> ModuleState[Any]:
-    """Save settings and write an audit entry. Raises StaleSettingsError if the
-    stored version isn't ``expected_version`` (someone else saved first)."""
+    """Save settings and write an audit entry in the same transaction.
+
+    Uses optimistic concurrency: the UPDATE only matches when the stored
+    ``version`` equals ``expected_version``.
+
+    Args:
+        session: Open async session (caller commits).
+        guild_id: Discord guild snowflake.
+        module: Registry module name.
+        enabled: Whether the module is on (forced True if not toggleable).
+        config: Validated settings model for this module.
+        expected_version: Version the editor loaded (0 = no row yet).
+        actor: Who made the change (audit log).
+
+    Returns:
+        New ``ModuleState`` including the bumped version.
+
+    Raises:
+        TypeError: ``config`` is not this module's settings model.
+        StaleSettingsError: Another save won the race (version mismatch).
+    """
     info = get_module(module)
     if not isinstance(config, info.settings_model):
         raise TypeError(f"{module} settings must be {info.settings_model.__name__}")

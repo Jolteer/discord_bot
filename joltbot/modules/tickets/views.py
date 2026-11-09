@@ -42,7 +42,12 @@ NOT_SET_UP = "Applications aren't set up on this server yet. Please let a staff 
 
 
 async def safe_reply(interaction: discord.Interaction, text: str) -> None:
-    """Reply privately, whether or not the interaction was already answered."""
+    """Reply privately, whether or not the interaction was already answered.
+
+    Args:
+        interaction: Discord component/slash interaction.
+        text: Ephemeral message body.
+    """
     try:
         if interaction.response.is_done():
             await interaction.followup.send(text, ephemeral=True)
@@ -204,6 +209,8 @@ class TicketControlView(discord.ui.View):
         lines = [f"Accept <@{ticket.user_id}>?"]
         if ctx.settings.extra_role_choices:
             lines.append("Optionally pick an extra role, then press **Confirm accept**.")
+        # TODO: ``require_attachment`` only warns; Accept still proceeds. If admins
+        # expect a hard block, enforce it here (or rename the setting to match warn-only).
         if ctx.settings.require_attachment and not await _applicant_uploaded_file(interaction.channel, ticket.user_id):
             lines.append("⚠️ The applicant hasn't uploaded a file yet.")
         view = AcceptView(self.bot, ticket, ctx.settings)
@@ -232,7 +239,13 @@ class TicketControlView(discord.ui.View):
 
 
 class _StaffPrompt(discord.ui.View):
-    """Base for the short-lived private prompts only the clicking staff member sees."""
+    """Base for the short-lived private prompts only the clicking staff member sees.
+
+    TODO: Unlike TicketControlView, this base does not re-run ``is_staff`` in
+    ``interaction_check``. Risk is mitigated because prompts are ephemeral (only
+    the clicker sees them), but a shared client or forwarded ephemeral could still
+    confirm Accept/Deny/Close without a second staff check.
+    """
 
     def __init__(self, bot: JoltBot, ticket: Ticket, timeout: float = 300) -> None:
         super().__init__(timeout=timeout)

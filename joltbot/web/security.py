@@ -81,6 +81,14 @@ def session_cookie_name(config: AppConfig) -> str:
 
 
 async def optional_session(request: Request) -> WebSession | None:
+    """Load the session from the cookie if present (memoized on ``request.state``).
+
+    Args:
+        request: Incoming HTTP request.
+
+    Returns:
+        ``WebSession`` or ``None`` if anonymous / expired.
+    """
     if hasattr(request.state, "web_session"):
         return request.state.web_session
     config = get_config(request)
@@ -90,6 +98,17 @@ async def optional_session(request: Request) -> WebSession | None:
 
 
 async def require_session(request: Request) -> WebSession:
+    """Require a logged-in dashboard session.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Returns:
+        Active ``WebSession``.
+
+    Raises:
+        LoginRequired: No valid session cookie.
+    """
     ws = await optional_session(request)
     if ws is None:
         raise LoginRequired()
@@ -97,7 +116,19 @@ async def require_session(request: Request) -> WebSession:
 
 
 async def current_user_guilds(request: Request, ws: WebSession) -> list[UserGuild]:
-    """The user's servers, re-checked with Discord at least every 5 minutes."""
+    """The user's servers, re-checked with Discord at least every 5 minutes.
+
+    Args:
+        request: Incoming HTTP request.
+        ws: Logged-in session.
+
+    Returns:
+        Parsed ``UserGuild`` list with ``can_manage`` flags.
+
+    Raises:
+        LoginRequired: Discord token revoked (session deleted).
+        HTTPException: 503 if Discord is unreachable and no cache exists.
+    """
     try:
         raw = await user_guilds(get_db(request), get_discord(request), ws)
     except DiscordUnauthorized:
@@ -129,13 +160,24 @@ class GuildAccess:
 
 
 async def guild_access(request: Request, guild_id: int) -> GuildAccess:
-    """FastAPI dependency for every /servers/{guild_id}/... route.
+    """FastAPI dependency for every ``/servers/{guild_id}/...`` route.
 
     1. Must be logged in.
     2. Discord must say they're the owner, an Administrator or have Manage Server there.
        (Checked BEFORE looking at our database, so non-admins can't even find out
        whether JoltBot is in a server.)
-    3. JoltBot must be in that server.
+    3. JoltBot must be in that server (``guilds.active``).
+
+    Args:
+        request: Incoming HTTP request.
+        guild_id: Guild id from the URL path only.
+
+    Returns:
+        ``GuildAccess`` proof object for the route handler.
+
+    Raises:
+        LoginRequired: Anonymous visitor.
+        HTTPException: 403 if not a manager; 404 if the bot is not in the guild.
     """
     ws = await require_session(request)
     match = next((g for g in await current_user_guilds(request, ws) if g.id == guild_id), None)
@@ -156,12 +198,18 @@ RequireSession = Annotated[WebSession, Depends(require_session)]
 
 
 async def verify_csrf(request: Request) -> None:
-    """Every POST must prove it came from our own page.
+    """Reject POSTs that do not prove they came from our own page.
 
     1. The request must carry the session's CSRF token, either as a hidden form
-       field (csrf_token) or an X-CSRF-Token header (sent by htmx). Another site
-       can make your browser POST here, but it can't read this token.
-    2. If the browser sent an Origin header, it must be our own site.
+       field (``csrf_token``) or an ``X-CSRF-Token`` header (sent by htmx).
+    2. If the browser sent an Origin header, it must match ``PUBLIC_BASE_URL``.
+
+    Args:
+        request: Incoming mutating request.
+
+    Raises:
+        HTTPException: 403 on Origin mismatch or bad/missing CSRF token.
+        LoginRequired: No session (token cannot be verified).
     """
     config = get_config(request)
     origin = request.headers.get("origin")

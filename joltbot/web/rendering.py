@@ -38,10 +38,26 @@ def css_built() -> bool:
 
 
 def nav_modules() -> list[dict[str, str]]:
+    """Sidebar entries for every registered module.
+
+    Returns:
+        List of ``{"name", "title"}`` dicts for guild layout links.
+    """
     return [{"name": m.name, "title": m.title} for m in MODULES.values()]
 
 
 async def render(request: Request, template: str, context: dict[str, Any] | None = None, status_code: int = 200):
+    """Render a Jinja template with shared base context (user, CSRF, invite URL).
+
+    Args:
+        request: Incoming HTTP request.
+        template: Template path relative to the ChoiceLoader roots.
+        context: Page-specific variables.
+        status_code: HTTP status for the response.
+
+    Returns:
+        HTML ``TemplateResponse``.
+    """
     ws = await optional_session(request)
     config = get_config(request)
     base = {

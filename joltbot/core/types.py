@@ -42,4 +42,9 @@ OptionalSnowflake = Annotated[Snowflake | None, BeforeValidator(_empty_to_none)]
 
 
 def utcnow() -> datetime:
+    """Current time as a timezone-aware UTC datetime.
+
+    Returns:
+        ``datetime`` with ``tzinfo=timezone.utc`` (required by ``UTCDateTime``).
+    """
     return datetime.now(timezone.utc)

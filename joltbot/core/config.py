@@ -50,18 +50,39 @@ class AppConfig(BaseSettings):
 
     @property
     def oauth_redirect_uri(self) -> str:
+        """OAuth2 redirect registered in the Discord Developer Portal.
+
+        Returns:
+            ``PUBLIC_BASE_URL`` + ``/auth/callback``.
+        """
         return f"{self.public_base_url}/auth/callback"
 
     @property
     def uses_https(self) -> bool:
+        """Whether the dashboard is served over HTTPS (secure cookies / HSTS).
+
+        Returns:
+            True when ``PUBLIC_BASE_URL`` starts with ``https://``.
+        """
         return self.public_base_url.startswith("https://")
 
     def missing(self, *names: str) -> list[str]:
-        """Names (as env vars) of required settings that are empty."""
+        """Return env var names for required settings that are empty.
+
+        Args:
+            *names: Attribute names on this config (e.g. ``"discord_token"``).
+
+        Returns:
+            Uppercase env names that are missing (e.g. ``["DISCORD_TOKEN"]``).
+        """
         return [name.upper() for name in names if not getattr(self, name)]
 
 
 @lru_cache
 def get_config() -> AppConfig:
-    """The settings, read once per process."""
+    """Load settings once per process from the environment / ``.env``.
+
+    Returns:
+        Shared ``AppConfig`` instance (cached).
+    """
     return AppConfig()

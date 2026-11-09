@@ -19,7 +19,18 @@ def _human_size(n: float) -> str:
 
 
 async def build_transcript(channel: discord.TextChannel, ticket: Ticket) -> tuple[str, list[discord.Attachment]]:
-    """Returns (transcript text, every attachment posted in the ticket)."""
+    """Build a plain-text history of the ticket channel.
+
+    Scans full history (``limit=None``); Message Content intent required or
+    message bodies come out empty.
+
+    Args:
+        channel: Ticket text channel still present on Discord.
+        ticket: DB row (answers / outcome header).
+
+    Returns:
+        ``(transcript_text, attachments)`` for the log upload and re-upload pass.
+    """
     lines = [
         f"Ticket #{ticket.id} - #{channel.name}",
         f"Applicant: {ticket.username} ({ticket.user_id})",
@@ -61,5 +72,14 @@ async def build_transcript(channel: discord.TextChannel, ticket: Ticket) -> tupl
 
 
 def transcript_file(text: str, ticket: Ticket) -> discord.File:
+    """Wrap transcript text as a Discord file attachment.
+
+    Args:
+        text: UTF-8 transcript body from ``build_transcript``.
+        ticket: Used for a safe filename stem.
+
+    Returns:
+        ``discord.File`` named ``ticket-<id>-<user>.txt``.
+    """
     safe = re.sub(r"[^a-zA-Z0-9_-]+", "-", ticket.username).strip("-") or "user"
     return discord.File(io.BytesIO(text.encode("utf-8")), filename=f"ticket-{ticket.id}-{safe}.txt")

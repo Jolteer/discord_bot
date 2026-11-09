@@ -23,8 +23,19 @@ class GuildInfo:
 
 
 async def ensure_guild(session: AsyncSession, info: GuildInfo) -> Guild:
-    """Create or reactivate a guild. New guilds get a settings row per module,
-    switched off, so an admin has to set each module up before it does anything."""
+    """Create or reactivate a guild row and ensure module_settings stubs exist.
+
+    New guilds get a settings row per module, switched off, so an admin must
+    configure each module before it acts. Re-invite within 30 days keeps old
+    settings and only clears ``left_at``.
+
+    Args:
+        session: Open async session (caller owns the transaction).
+        info: Discord guild id/name/icon from the gateway.
+
+    Returns:
+        The persisted ``Guild`` row.
+    """
     now = utcnow()
     guild = await session.get(Guild, info.id)
     if guild is None:
@@ -49,7 +60,14 @@ async def ensure_guild(session: AsyncSession, info: GuildInfo) -> Guild:
 
 
 async def mark_guild_left(session: AsyncSession, guild_id: int) -> None:
-    """JoltBot was removed. Keep the data for 30 days in case it's re-invited."""
+    """Mark a guild inactive after JoltBot was removed.
+
+    Data is kept for ``RETENTION`` (30 days) in case the bot is re-invited.
+
+    Args:
+        session: Open async session (caller owns the transaction).
+        guild_id: Discord guild snowflake.
+    """
     guild = await session.get(Guild, guild_id)
     if guild is not None and guild.active:
         guild.active = False
@@ -64,7 +82,15 @@ async def sync_guilds(
 
     ``unavailable_ids`` are servers Discord reports as temporarily unavailable
     (an outage on their side). The bot is still in them, so they must NOT be
-    marked as left. Returns (ids that are new or rejoined, ids marked as left).
+    marked as left.
+
+    Args:
+        session: Open async session (caller owns the transaction).
+        present: Guilds currently connected and available.
+        unavailable_ids: Guild IDs still in the bot but marked unavailable.
+
+    Returns:
+        ``(joined_or_rejoined_ids, left_ids)`` sorted lists.
     """
     present_ids = {g.id for g in present}
     active_before = set((await session.execute(select(Guild.id).where(Guild.active.is_(True)))).scalars())
@@ -80,8 +106,18 @@ async def sync_guilds(
 
 
 async def purge_left_guilds(session: AsyncSession, now: datetime | None = None) -> list[int]:
-    """Delete guilds that left more than 30 days ago. Their settings, tickets,
-    audit log, etc. go with them (ON DELETE CASCADE)."""
+    """Delete guilds that left more than 30 days ago.
+
+    Settings, tickets, audit log, and other guild-owned rows are removed via
+    ``ON DELETE CASCADE``.
+
+    Args:
+        session: Open async session (caller owns the transaction).
+        now: Optional clock override for tests.
+
+    Returns:
+        Guild IDs that were deleted.
+    """
     cutoff = (now or utcnow()) - RETENTION
     ids = list(
         (

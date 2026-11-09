@@ -21,13 +21,17 @@ def _info(guild: discord.Guild) -> GuildInfo:
 
 
 class GuildSync(commands.Cog):
+    """Mirror Discord guild membership into the ``guilds`` table and purge leftovers."""
+
     def __init__(self, bot: JoltBot) -> None:
         self.bot = bot
 
     async def cog_load(self) -> None:
+        """Start the daily purge loop when the extension loads."""
         self.purge.start()
 
     async def cog_unload(self) -> None:
+        """Stop the purge loop when the extension unloads."""
         self.purge.cancel()
 
     @commands.Cog.listener()
@@ -81,4 +85,9 @@ class GuildSync(commands.Cog):
 
 
 async def setup(bot: JoltBot) -> None:
+    """discord.py extension entry point for guild sync.
+
+    Args:
+        bot: The running ``JoltBot`` instance.
+    """
     await bot.add_cog(GuildSync(bot))

@@ -1,0 +1,185 @@
+# JoltBot architecture
+
+This document explains how the bot and dashboard fit together: startup, module
+registration, event/command routing, data storage, and external APIs. For setup
+and deploy steps, see the [README](../README.md). For contribution workflow, see
+[CONTRIBUTING.md](../CONTRIBUTING.md).
+
+## Big picture
+
+JoltBot is **two processes** that share one SQLite database:
+
+| Process | Entry point | Role |
+|---|---|---|
+| Bot | `python -m joltbot.bot` | Discord gateway: members, buttons, slash commands, ticket lifecycle |
+| Dashboard | `python -m joltbot.web` | FastAPI site: Discord OAuth login, per-server settings, audit log |
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│  joltbot.bot    │     │  joltbot.web    │
+│  (discord.py)   │     │  (FastAPI)      │
+└────────┬────────┘     └────────┬────────┘
+         │                       │
+         │    shared SQLite      │
+         │    (WAL + busy_timeout)│
+         └───────────┬───────────┘
+                     │
+              data/joltbot.db
+                     │
+         both talk to Discord APIs
+         (gateway vs REST)
+```
+
+`joltbot/core/` is shared code with **no** discord.py or FastAPI imports, so
+either process can use config, DB, guild settings, permissions, and templating.
+
+Feature modules live under `joltbot/modules/` and are listed once in
+[`modules/registry.py`](../joltbot/modules/registry.py). The bot loads each
+module's cog; the dashboard mounts each module's FastAPI router.
+
+## Bot startup flow
+
+1. `joltbot/bot/__main__.py:main()` loads `AppConfig`, sets up logging.
+2. Missing `DISCORD_TOKEN` or a schema mismatch → exit code **3** (`EXIT_BAD_SETUP`).
+3. Retry loop calls `run_once()` → `JoltBot` → `bot.start(token)`.
+   - `LoginFailure` → exit **2** (bad token; systemd is told not to restart).
+   - `PrivilegedIntentsRequired` → exit **3**.
+   - Other errors → sleep with growing delay (10s → 300s), then retry.
+4. `JoltBot.setup_hook()` (`bot/client.py`):
+   - Load `guild_sync` extension.
+   - For each registry entry with a `cog`, `load_extension(module.cog)`.
+   - Start background slash-command sync (hash-based; retries until Discord accepts it).
+5. `GuildSync.on_ready` upserts present guilds into the DB and schedules the
+   daily 30-day purge of left guilds.
+6. Tickets cog registers **persistent views**, starts the 5-minute recovery loop,
+   and optionally sweeps pending roles once at first ready.
+
+## Dashboard startup flow
+
+1. `joltbot/web/__main__.py` runs uvicorn with factory `joltbot.web.app:create_app`.
+2. Lifespan fails fast if `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`,
+   `DISCORD_CLIENT_SECRET`, or `SESSION_SECRET` is missing; optionally checks schema.
+3. `create_app()` mounts `/static`, security middleware, then routers:
+   `health` → `pages` → `auth` → `guild` → each module `web` router from the registry.
+4. Single uvicorn worker on purpose: Discord role/channel caches are in-process.
+
+## Module registry
+
+[`ModuleInfo`](../joltbot/modules/registry.py) describes each feature:
+
+- `name` — DB key; never rename after release
+- `settings_model` — Pydantic model (subclass of `ModuleSettingsModel`)
+- `toggleable` — `False` for always-on modules like `general`
+- `cog` / `web` — optional dotted paths loaded only by the matching process
+
+Current modules: **general** (embed colour + module toggles) and **tickets**
+(verification flow).
+
+Adding a module: create `joltbot/modules/<name>/` with `settings.py`, optional
+`cog.py` / `web.py` / `templates/`, then one `ModuleInfo` entry. No other
+wiring.
+
+## How Discord events and commands are routed
+
+### Slash commands
+
+- Defined on cogs with `discord.app_commands` (e.g. `Tickets` group cog).
+- Tree uses a custom `Tree.on_error` for check failures and missing bot perms.
+- Global sync is deferred and hashed in `bot_meta` so Discord is not hit on
+  every restart. Optional clear of legacy per-guild commands after KOC migration.
+
+### Persistent components
+
+- Panel and ticket control views use fixed `custom_id`s and `timeout=None`.
+- Registered in `cog_load` so buttons on old messages still work after restart.
+- Legacy `rokverify:` / `rokticket:` IDs remain registered for Gatekeeper panels.
+
+### Events
+
+Tickets cog listens for join (pending role), raw member remove (close ticket if
+applicant left), and channel delete. Guild sync listens for join/remove/ready.
+
+### Settings freshness
+
+The bot calls `load_module()` from the DB on **every** event. Dashboard saves
+apply immediately; there is no settings cache to invalidate.
+
+## Ticket lifecycle
+
+```
+applicant opens panel
+        │
+        ▼
+   reserve row (open)
+        │
+        ▼
+  create private channel
+        │
+        ▼
+ staff Accept / Deny / Close
+        │
+        ▼
+ claim: open → closing   (atomic UPDATE; prevents double-handling)
+        │
+        ▼
+ finalize: mute → transcript → log channel → mark closed
+        │
+        ▼
+ delay → delete channel   (only if log succeeded)
+```
+
+Key rules (see `modules/tickets/service.py` and `store.py`):
+
+- Partial unique index: one `open`/`closing` ticket per `(guild_id, user_id)`.
+- `claim()` is a conditional UPDATE; only one worker wins.
+- Failures after claim should `release` or finish finalize so tickets do not stick.
+- Recovery every 5 minutes resumes stuck `closing` tickets, missing channels, etc.
+- Channel is not deleted if the log post failed (preserve evidence).
+
+## Dashboard auth and access control
+
+1. **OAuth** (`identify guilds`): `/login` → Discord → `/auth/callback` with
+   one-time `state` cookie.
+2. **Session**: opaque cookie token; DB stores HMAC-SHA256(`SESSION_SECRET`, token).
+   Discord access token is stored on the session row (needed to refresh guild list).
+3. **CSRF**: per-session token on POSTs; Origin must match `PUBLIC_BASE_URL` when present.
+4. **Guild access** (`RequireGuild`): user must have Manage Server / Admin / owner
+   in Discord for that guild **before** any DB lookup of bot membership (avoids
+   leaking “is the bot here?”). Then the guild must exist and be `active`.
+5. Guild list cached up to 5 minutes; role/channel lists for forms cached ~60s
+   (refresh button clears them).
+
+## Data storage
+
+| Table | Purpose |
+|---|---|
+| `guilds` | Servers JoltBot has joined; `left_at` + 30-day purge |
+| `module_settings` | Per-guild JSON config + `enabled` + optimistic `version` |
+| `tickets` | Application lifecycle |
+| `panel_messages` | Last posted panel message per module |
+| `audit_log` | Who changed settings |
+| `guild_issues` | Bot problems with no interaction to reply on |
+| `web_sessions` | Dashboard logins |
+| `bot_meta` | Slash sync hash, migration flags |
+
+Schema is owned by Alembic (`migrations/`). Startup refuses to run if the DB
+version is not at head (`core/schema.py`). SQLite uses WAL and a 5s busy
+timeout so bot and web can write concurrently.
+
+Guild-owned rows use `ON DELETE CASCADE` when a left guild is purged.
+
+## External services
+
+- **Discord Gateway** (bot): privileged intents — Server Members, Message Content.
+- **Discord REST** (dashboard via bot token): list guild roles/channels for forms.
+- **Discord OAuth2** (dashboard): user login and guild permission checks.
+- No other third-party APIs in the core path. Optional Caddy terminates HTTPS
+  in Docker Compose (`--profile proxy`).
+
+## Reliability patterns
+
+- Bot process retry loop with exit codes for permanent failures.
+- Ticket recovery loop + claim/release.
+- Issues table for admin-visible problems.
+- Optimistic concurrency on settings saves (`StaleSettingsError`).
+- Foreign role/channel IDs from other guilds rejected on ticket settings save.
