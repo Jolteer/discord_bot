@@ -188,7 +188,7 @@ async def tickets_state(db, guild_id):
 async def test_landing_page_is_public(app):
     async with client_for(app) as client:
         r = await client.get("/")
-    assert r.status_code == 200 and "Add to Server" in r.text
+    assert r.status_code == 200 and "Add to Discord" in r.text
     assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
 
 

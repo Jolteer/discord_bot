@@ -1,21 +1,21 @@
 {% for e in entries %}
   <tr class="align-top">
-    <td class="whitespace-nowrap px-4 py-3 text-slate-400">{{ e.when.strftime('%Y-%m-%d %H:%M') }}</td>
-    <td class="px-4 py-3">
+    <td class="whitespace-nowrap px-3 py-2.5 text-jb-muted">{{ e.when.strftime('%Y-%m-%d %H:%M') }}</td>
+    <td class="px-3 py-2.5">
       <div>{{ e.who }}</div>
-      <div class="text-xs text-slate-500">{{ e.source }}{% if e.module %} · {{ e.module }}{% endif %}</div>
+      <div class="text-xs text-jb-subtle">{{ e.source }}{% if e.module %} · {{ e.module }}{% endif %}</div>
     </td>
-    <td class="px-4 py-3">
+    <td class="px-3 py-2.5">
       {% if e.changes %}
         <ul class="space-y-1">
           {% for c in e.changes %}
-            <li><span class="font-mono text-xs text-slate-400">{{ c.field }}</span>:
+            <li><span class="font-mono text-xs text-jb-muted">{{ c.field }}</span>:
               <span class="text-red-300 line-through decoration-red-500/50">{{ c.old }}</span>
               → <span class="text-emerald-300">{{ c.new }}</span></li>
           {% endfor %}
         </ul>
       {% else %}
-        <span class="text-slate-400">{{ e.action }}</span>
+        <span class="text-jb-muted">{{ e.action }}</span>
       {% endif %}
     </td>
   </tr>
@@ -23,10 +23,10 @@
 {% if has_more %}
   {# With htmx this swaps in the next page in place; without it, it's a normal link. #}
   <tr id="audit-more">
-    <td colspan="3" class="px-4 py-3 text-center">
+    <td colspan="3" class="px-3 py-2.5 text-center">
       <a href="/servers/{{ guild.id }}/audit?before={{ next_before }}"
          hx-get="/servers/{{ guild.id }}/audit?before={{ next_before }}" hx-target="#audit-more" hx-swap="outerHTML"
-         class="text-sm text-amber-400 hover:underline">Load older changes</a>
+         class="text-sm text-jb-accent transition duration-150 hover:underline">Load older changes</a>
     </td>
   </tr>
 {% endif %}

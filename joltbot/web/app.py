@@ -31,10 +31,13 @@ TAILWIND_CDN = "https://cdn.jsdelivr.net"
 def content_security_policy(allow_cdn: bool) -> str:
     """The CSP header value; allow_cdn adds the Tailwind CDN to script-src."""
     scripts = f"'self' {TAILWIND_CDN}" if allow_cdn else "'self'"
+    # fonts.googleapis.com serves the CSS; fonts.gstatic.com serves the font files.
+    styles = "'self' 'unsafe-inline' https://fonts.googleapis.com"
     return (
         "default-src 'self'; "
         f"script-src {scripts}; "
-        "style-src 'self' 'unsafe-inline'; "
+        f"style-src {styles}; "
+        "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data: https://cdn.discordapp.com; "
         "connect-src 'self'; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"

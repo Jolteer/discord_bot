@@ -1,4 +1,4 @@
-// Live preview for message fields on the dashboard.
+// Live preview for message fields on the dashboard + compact site chrome.
 //
 // Mirrors joltbot/core/templating.py: only {simple_names} are replaced, unknown
 // ones are left as typed, and {guild} is an old name for {server}. Keep the two
@@ -42,7 +42,7 @@
       .replace(/`([^`]+)`/g, '<code class="rounded bg-black/30 px-1">$1</code>');
   }
 
-  function setUp() {
+  function setUpPreview() {
     const form = document.querySelector("form[data-server-name]");
     const values = sampleValues(form ? form.dataset.serverName : "");
     document.querySelectorAll("[data-preview]").forEach(function (field) {
@@ -54,6 +54,42 @@
       field.addEventListener("input", update);
       update();
     });
+  }
+
+  function setUpNav() {
+    const toggle = document.getElementById("nav-toggle");
+    const panel = document.getElementById("mobile-nav");
+    const iconOpen = document.getElementById("nav-icon-open");
+    const iconClose = document.getElementById("nav-icon-close");
+    if (!toggle || !panel) return;
+
+    function setOpen(open) {
+      panel.classList.toggle("hidden", !open);
+      panel.hidden = !open;
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      toggle.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+      if (iconOpen) iconOpen.classList.toggle("hidden", open);
+      if (iconClose) iconClose.classList.toggle("hidden", !open);
+    }
+
+    toggle.addEventListener("click", function () {
+      setOpen(panel.hidden);
+    });
+
+    panel.querySelectorAll("a").forEach(function (link) {
+      link.addEventListener("click", function () {
+        setOpen(false);
+      });
+    });
+
+    window.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") setOpen(false);
+    });
+  }
+
+  function setUp() {
+    setUpPreview();
+    setUpNav();
   }
 
   if (document.readyState === "loading") {
