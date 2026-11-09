@@ -2,24 +2,24 @@
 {% import "_form.html" as f %}
 {% block page %}
 <div class="flex flex-wrap items-center justify-between gap-3">
-  <h1 class="text-2xl font-bold">Tickets &amp; verification</h1>
+  <h1 class="text-xl font-bold tracking-tight">Tickets &amp; verification</h1>
   <form method="post" action="/servers/{{ guild.id }}/refresh">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="next" value="/servers/{{ guild.id }}/tickets">
-    <button class="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800" title="Reload roles and channels from Discord">↻ Refresh roles &amp; channels</button>
+    <button class="jb-btn-secondary px-3 py-1.5 text-xs" title="Reload roles and channels from Discord">↻ Refresh roles &amp; channels</button>
   </form>
 </div>
 
-<div class="mt-4 space-y-2">{{ f.messages_box(errors, warnings, issues, saved) }}</div>
+<div class="mt-3 space-y-2">{{ f.messages_box(errors, warnings, issues, saved) }}</div>
 
-<form method="post" action="/servers/{{ guild.id }}/tickets" class="mt-6 space-y-6" data-server-name="{{ guild.name }}">
+<form method="post" action="/servers/{{ guild.id }}/tickets" class="mt-4 space-y-4" data-server-name="{{ guild.name }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="version" value="{{ version }}">
 
   {% call f.section("Status") %}
     {{ f.checkbox("enabled", "Ticket module is ON", enabled,
                   "While off, JoltBot ignores the panel button and doesn't give roles to new members.") }}
-    <p class="text-xs text-slate-400">After setting up, post the panel in Discord with <code class="text-amber-300">/tickets panel</code>, then check everything with <code class="text-amber-300">/tickets diagnostics</code>.</p>
+    <p class="text-xs text-jb-muted">After setting up, post the panel in Discord with <code class="jb-code">/tickets panel</code>, then check everything with <code class="jb-code">/tickets diagnostics</code>.</p>
   {% endcall %}
 
   {% call f.section("Staff", "Who can accept, deny and close tickets.") %}
@@ -28,7 +28,7 @@
   {% endcall %}
 
   {% call f.section("Channels") %}
-    <div class="grid gap-4 sm:grid-cols-2">
+    <div class="grid gap-3 sm:grid-cols-2">
       {{ f.channel_select("panel_channel_id", "Panel channel", text_channels, values.panel_channel_id,
                           "Where the Open Application button is posted.") }}
       {{ f.channel_select("ticket_category_id", "Ticket category", categories, values.ticket_category_id,
@@ -49,20 +49,20 @@
                   values.assign_pending_on_startup) }}
     <div>
       <div class="text-sm font-medium">Extra role choices (optional)</div>
-      <p class="text-xs text-slate-400">Staff can pick one of these when accepting, e.g. a team. Leave a row empty to skip it.</p>
+      <p class="text-xs text-jb-muted">Staff can pick one of these when accepting, e.g. a team. Leave a row empty to skip it.</p>
       <div class="mt-2 space-y-2">
         {% for row in extras %}
           <div class="grid grid-cols-[1fr_1fr_5rem] gap-2">
             <input name="extra_label_{{ loop.index0 }}" value="{{ row.label }}" placeholder="Label" maxlength="100"
-                   class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
-            <select name="extra_role_{{ loop.index0 }}" class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+                   class="jb-input">
+            <select name="extra_role_{{ loop.index0 }}" class="jb-input">
               <option value="">(role)</option>
               {% for r in roles if not r.managed %}
                 <option value="{{ r.id }}" {{ 'selected' if r.id == row.role_id }}>{{ r.name }}</option>
               {% endfor %}
             </select>
             <input name="extra_emoji_{{ loop.index0 }}" value="{{ row.emoji or '' }}" placeholder="Emoji" maxlength="64"
-                   class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+                   class="jb-input">
           </div>
         {% endfor %}
       </div>
@@ -77,19 +77,19 @@
 
   {% call f.section("Application form", "Up to 5 questions. Leave a question's text empty to remove it.") %}
     {% for q in questions %}
-      <div class="rounded-lg border border-slate-800 p-3">
+      <div class="rounded-[10px] border border-jb-border p-3">
         <div class="grid gap-2 sm:grid-cols-2">
           <input name="q_label_{{ loop.index0 }}" value="{{ q.label }}" placeholder="Question {{ loop.index }}" maxlength="45"
-                 class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+                 class="jb-input">
           <input name="q_placeholder_{{ loop.index0 }}" value="{{ q.placeholder }}" placeholder="Hint text (optional)" maxlength="100"
-                 class="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+                 class="jb-input">
         </div>
         <div class="mt-2 flex flex-wrap items-center gap-4 text-sm">
           {{ f.checkbox("q_required_" ~ loop.index0, "Required", q.required) }}
           {{ f.checkbox("q_long_" ~ loop.index0, "Long answer", q.long) }}
           <label class="flex items-center gap-2">Max length
             <input type="number" name="q_max_{{ loop.index0 }}" value="{{ q.max_length }}" min="1" max="1000"
-                   class="w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-sm"></label>
+                   class="jb-input w-24"></label>
         </div>
       </div>
     {% endfor %}
@@ -102,21 +102,21 @@
       <div class="grid gap-3 lg:grid-cols-2">
         <label class="block">
           <span class="text-sm font-medium">{{ m.label }}</span>
-          <span class="block text-xs text-slate-400">{{ m.help }}{% if m.placeholders %} Placeholders:
-            {% for p in m.placeholders %}<code class="text-amber-300">{{ '{' ~ p ~ '}' }}</code>{{ ', ' if not loop.last }}{% endfor %}{% endif %}</span>
+          <span class="block text-xs text-jb-muted">{{ m.help }}{% if m.placeholders %} Placeholders:
+            {% for p in m.placeholders %}<code class="jb-code">{{ '{' ~ p ~ '}' }}</code>{{ ', ' if not loop.last }}{% endfor %}{% endif %}</span>
           {% if m.multiline %}
             <textarea name="msg_{{ m.key }}" rows="4" {% if m.max_length %}maxlength="{{ m.max_length }}"{% endif %}
                       data-preview="preview-{{ m.key }}"
-                      class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm">{{ m.value }}</textarea>
+                      class="jb-input mt-1 font-mono">{{ m.value }}</textarea>
           {% else %}
             <input name="msg_{{ m.key }}" value="{{ m.value }}" {% if m.max_length %}maxlength="{{ m.max_length }}"{% endif %}
                    data-preview="preview-{{ m.key }}"
-                   class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm">
+                   class="jb-input mt-1 font-mono">
           {% endif %}
         </label>
         <div>
-          <span class="text-xs uppercase tracking-wide text-slate-500">Preview</span>
-          <div id="preview-{{ m.key }}" class="mt-1 min-h-10 whitespace-pre-wrap break-words rounded-lg border-l-4 border-amber-400 bg-[#2b2d31] px-3 py-2 text-sm text-slate-100"></div>
+          <span class="jb-section-label">Preview</span>
+          <div id="preview-{{ m.key }}" class="mt-1 min-h-10 whitespace-pre-wrap break-words rounded-[10px] border-l-4 border-jb-accent bg-[#2b2d31] px-3 py-2 text-sm text-jb-text"></div>
         </div>
       </div>
     {% endfor %}
@@ -126,14 +126,14 @@
     <label class="block max-w-xs">
       <span class="text-sm font-medium">Delete closed ticket channels after (seconds)</span>
       <input type="number" name="delete_delay_seconds" value="{{ values.delete_delay_seconds }}" min="0" max="3600"
-             class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+             class="jb-input mt-1">
     </label>
     {{ f.checkbox("reupload_attachments", "Copy uploaded files to the log channel before deleting the ticket",
                   values.reupload_attachments, "Discord deletes files when their channel is deleted. Recommended.") }}
   {% endcall %}
 
-  <div class="sticky bottom-0 -mx-4 border-t border-slate-800 bg-slate-950/95 px-4 py-3">
-    <button class="rounded-lg bg-amber-400 px-5 py-2 font-semibold text-slate-950 hover:bg-amber-300">Save changes</button>
+  <div class="sticky bottom-0 -mx-4 border-t border-jb-border bg-jb-bg/95 px-4 py-3 backdrop-blur-md">
+    <button class="jb-btn-primary px-5">Save changes</button>
   </div>
 </form>
 {% endblock %}
