@@ -47,8 +47,13 @@ module's cog; the dashboard mounts each module's FastAPI router.
    - Other errors → sleep with growing delay (10s → 300s), then retry.
 4. `JoltBot.setup_hook()` (`bot/client.py`):
    - Load `guild_sync` extension.
-   - For each registry entry with a `cog`, `load_extension(module.cog)`.
+   - For each registry entry with a `cog`, `load_extension(module.cog)`. A module
+     that fails to load is logged at ERROR and skipped (`bot.failed_modules`);
+     the other modules keep working.
    - Start background slash-command sync (hash-based; retries until Discord accepts it).
+     Skipped when a module failed to load, so its commands are not unregistered.
+   - SIGTERM (`docker stop`, `systemctl stop`) closes the bot cleanly; the
+     process then exits 0.
 5. `GuildSync.on_ready` upserts present guilds into the DB and schedules the
    daily 30-day purge of left guilds.
 6. Tickets cog registers **persistent views**, starts the 5-minute recovery loop,

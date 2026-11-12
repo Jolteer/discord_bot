@@ -64,6 +64,7 @@ class JoltBot(commands.Bot):
         config: Process settings (token is passed separately to ``start``).
 
     Attributes:
+        failed_modules: Names of modules whose cog failed to load at startup.
         tickets: Set by the tickets cog on load; ticket lifecycle entry point.
         config: Shared ``AppConfig``.
         db: Shared ``Database`` for this process.
@@ -87,13 +88,32 @@ class JoltBot(commands.Bot):
         self.config = config
         self.db = Database(config.database_url)
         self._background: set[asyncio.Task] = set()
+        self.failed_modules: list[str] = []  # names of modules whose cog didn't load
 
     async def setup_hook(self) -> None:
-        """Load guild_sync + module cogs; start background slash sync with retry."""
+        """Load guild_sync + module cogs; start background slash sync with retry.
+
+        A module whose cog fails to load is logged and skipped, so one broken
+        module can't keep the whole bot offline. ``guild_sync`` is core: if it
+        fails, startup fails.
+        """
         await self.load_extension("joltbot.bot.guild_sync")
+        self.failed_modules = []
         for module in MODULES.values():
-            if module.cog:
+            if not module.cog:
+                continue
+            try:
                 await self.load_extension(module.cog)
+            except commands.ExtensionError:
+                log.exception(
+                    "Module %r failed to load; it stays off until this is fixed and the bot restarts", module.name
+                )
+                self.failed_modules.append(module.name)
+        if self.failed_modules:
+            # The command list no longer includes the broken module's commands, so syncing
+            # now would make Discord delete them in every server.
+            log.error("Not registering slash commands because of failed module(s): %s", ", ".join(self.failed_modules))
+            return
         # Registering slash commands is an HTTP call. The old bot did it right here, so a
         # Discord hiccup at startup crashed the whole bot. Now it runs in the background
         # and simply retries until it works.
@@ -214,6 +234,8 @@ class JoltBot(commands.Bot):
             log.exception("Couldn't clear issue %s for guild %s", key, guild_id)
 
     async def close(self) -> None:
-        """Disconnect from Discord and dispose the database engine."""
+        """Stop background work, disconnect from Discord and dispose the database engine."""
+        for task in self._background:
+            task.cancel()
         await super().close()
         await self.db.dispose()

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 import sys
 import time
 
@@ -45,6 +46,26 @@ async def check_database(url: str) -> str | None:
         await db.dispose()
 
 
+def close_on_sigterm(bot: JoltBot) -> None:
+    """Disconnect cleanly when the process is asked to stop.
+
+    ``docker stop`` and ``systemctl stop`` send SIGTERM. Without a handler the
+    bot is killed mid-work (and under Docker only after a 10-second wait).
+    Closing the bot makes ``bot.start`` return, so the process exits normally.
+    Must be called from inside the running event loop.
+
+    Args:
+        bot: The bot to close when SIGTERM arrives.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(signal.SIGTERM, lambda: loop.create_task(bot.close()))
+    except (NotImplementedError, RuntimeError, ValueError) as e:
+        # Windows event loops have no signal handlers (Ctrl+C still works there). Whatever
+        # the reason, a missing stop handler must never keep the bot from starting.
+        log.debug("No SIGTERM handler installed: %r", e)
+
+
 async def run_once() -> None:
     """Run the bot until it disconnects cleanly or raises.
 
@@ -55,6 +76,7 @@ async def run_once() -> None:
     """
     bot = JoltBot(get_config())
     async with bot:
+        close_on_sigterm(bot)
         await bot.start(get_config().discord_token)
 
 

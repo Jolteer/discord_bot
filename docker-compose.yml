@@ -29,6 +29,9 @@ services:
   bot:
     <<: *app
     command: ["python", "-m", "joltbot.bot"]
+    # A tiny init process as PID 1, so stop signals always reach the bot. It then
+    # disconnects cleanly and `docker compose stop bot` returns at once.
+    init: true
     environment:
       LOG_DIR: ""  # console only; read it with `docker compose logs`
     # No health check: the bot has no web server. Docker restarts it if it exits.
