@@ -19,6 +19,10 @@ OUTCOME_STYLE: dict[str, tuple[str, discord.Colour]] = {
 }
 
 
+MAX_ANSWERS = 9  # 5 form questions + 4 dropdown questions
+ANSWERS_BUDGET = 5200  # characters all answers may use together in one embed
+
+
 def ts(dt: datetime | None, style: str = "f") -> str:
     return discord.utils.format_dt(dt, style) if dt else "-"
 
@@ -42,8 +46,14 @@ def panel_embed(settings: TicketSettings, guild: discord.Guild, colour: discord.
 
 
 def _answer_fields(embed: discord.Embed, ticket: Ticket, limit: int = 1024) -> None:
-    for answer in (ticket.answers or [])[:5]:
-        embed.add_field(name=clip(answer.get("label"), 256), value=clip(answer.get("value"), limit), inline=False)
+    # Discord refuses an embed over 6000 characters in total. Five long answers come close,
+    # so the answers share a budget that leaves room for the embed's other fields.
+    budget = ANSWERS_BUDGET
+    for answer in (ticket.answers or [])[:MAX_ANSWERS]:
+        name = clip(answer.get("label"), 256)
+        value = clip(answer.get("value"), max(min(limit, budget - len(name)), 16))
+        budget -= len(name) + len(value)
+        embed.add_field(name=name, value=value, inline=False)
 
 
 def application_embed(member: discord.Member, ticket: Ticket, colour: discord.Colour) -> discord.Embed:

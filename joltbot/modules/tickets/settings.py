@@ -194,6 +194,36 @@ class TicketSettings(ModuleSettingsModel):
         """Every role a dropdown option gives."""
         return {o.role_id for q in self.choice_questions for o in q.options if o.role_id is not None}
 
+    def picked_roles(self, answers: list[dict[str, str]] | None) -> tuple[list[tuple[str, int]], list[str]]:
+        """Which roles an application's dropdown picks give, under the settings as they are now.
+
+        The role ID stored with an answer is only what the applicant asked for
+        when they applied. It is given only if it is still the role of some
+        dropdown option, so removing a role from the options on the dashboard
+        also stops it for tickets that are already open.
+
+        Args:
+            answers: The ticket's stored answers.
+
+        Returns:
+            ``(granted, dropped)``: ``granted`` holds ``("Question: Option", role_id)``
+            for each pick that still gives a role; ``dropped`` names the picks
+            whose role is no longer set up.
+        """
+        allowed = self.choice_role_ids
+        granted: list[tuple[str, int]] = []
+        dropped: list[str] = []
+        for answer in answers or []:
+            raw = str(answer.get("role_id") or "")
+            if not raw:
+                continue
+            name = f"{answer.get('label', '?')}: {answer.get('value', '?')}"
+            if raw.isdigit() and int(raw) in allowed:
+                granted.append((name, int(raw)))
+            else:
+                dropped.append(name)
+        return granted, dropped
+
     def assignable_roles(self) -> list[AssignableRole]:
         """Every role JoltBot gives or takes away in this server, in dashboard order.
 

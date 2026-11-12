@@ -13,6 +13,7 @@ tickets keep working. Once every server has re-posted its panel with
 
 from __future__ import annotations
 
+import functools
 import logging
 from typing import TYPE_CHECKING
 
@@ -91,9 +92,11 @@ async def staff_check(bot: JoltBot, interaction: discord.Interaction) -> bool:
 class ApplicationModal(discord.ui.Modal):
     """The application form. Built from the server's own questions (max 5)."""
 
-    def __init__(self, bot: JoltBot, settings: TicketSettings) -> None:
+    def __init__(self, bot: JoltBot, settings: TicketSettings, choices: list[dict[str, str]] | None = None) -> None:
         super().__init__(title=settings.messages.form_title[:45], timeout=900)
         self.bot = bot
+        # Answers already given in the dropdown step (ChoiceStepView); stored after the typed ones.
+        self.choices: list[dict[str, str]] = list(choices or [])
         self.inputs: list[tuple[str, discord.ui.TextInput]] = []
         for question in settings.form_questions[:5]:
             text_input = discord.ui.TextInput(
@@ -115,6 +118,7 @@ class ApplicationModal(discord.ui.Modal):
             await interaction.followup.send(NOT_SET_UP, ephemeral=True)
             return
         answers = [{"label": label, "value": (field.value or "").strip()} for label, field in self.inputs]
+        answers += self.choices
         channel, error = await self.bot.tickets.create_ticket(member, ctx, answers)
         if error:
             await interaction.followup.send(f"❌ {error}", ephemeral=True)
@@ -132,6 +136,95 @@ class ApplicationModal(discord.ui.Modal):
     async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
         log.exception("Application form failed", exc_info=error)
         await safe_reply(interaction, "Something went wrong submitting your application. Please try again.")
+
+
+CHOICE_STEP_TEXT = "**Step 1 of 2.** Pick an option from each list, then press **Continue** to fill in the form."
+
+
+class ChoiceStepView(discord.ui.View):
+    """Step 1 of applying on a server with dropdown questions: one dropdown per question.
+
+    Shown privately to the applicant after they click the panel button.
+    **Continue** opens the form (``ApplicationModal``) and hands it the picks.
+    Discord can also put dropdowns inside a form, but a form holds 5 items in
+    total, and servers may already use all 5 for typed questions.
+
+    Not persistent: it lives for 5 minutes in memory. After a restart or a
+    timeout the applicant simply clicks the panel button again.
+    """
+
+    def __init__(self, bot: JoltBot, settings: TicketSettings) -> None:
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.settings = settings
+        self.questions = settings.choice_questions[:4]
+        self.picks: dict[int, int] = {}  # question number -> option number
+        self.selects: list[discord.ui.Select] = []
+        self.message: discord.InteractionMessage | None = None
+        for number, question in enumerate(self.questions):
+            select = discord.ui.Select(
+                placeholder=(question.label if question.required else f"{question.label} (optional)")[:150],
+                min_values=1 if question.required else 0,
+                max_values=1,
+                options=[
+                    discord.SelectOption(label=option.label[:100], value=str(i))
+                    for i, option in enumerate(question.options[:25])
+                ],
+                row=number,
+            )
+            select.callback = functools.partial(self._picked, number)
+            self.add_item(select)
+            self.selects.append(select)
+        self.continue_button = discord.ui.Button(label="Continue", style=discord.ButtonStyle.success, row=4)
+        self.continue_button.callback = self._continue
+        self.add_item(self.continue_button)
+
+    async def _picked(self, number: int, interaction: discord.Interaction) -> None:
+        values = self.selects[number].values
+        if values:
+            self.picks[number] = int(values[0])
+        else:  # an optional dropdown was cleared again
+            self.picks.pop(number, None)
+        await interaction.response.defer()
+
+    def answers(self) -> list[dict[str, str]]:
+        """The picks in the shape ticket answers are stored in.
+
+        Returns:
+            One ``{"label", "value"}`` per answered question, plus ``"role_id"``
+            when the picked option gives a role.
+        """
+        answers = []
+        for number, question in enumerate(self.questions):
+            if number not in self.picks:
+                continue
+            option = question.options[self.picks[number]]
+            answer = {"label": question.label, "value": option.label}
+            if option.role_id is not None:
+                answer["role_id"] = str(option.role_id)
+            answers.append(answer)
+        return answers
+
+    async def _continue(self, interaction: discord.Interaction) -> None:
+        missing = [q.label for number, q in enumerate(self.questions) if q.required and number not in self.picks]
+        if missing:
+            await interaction.response.send_message(
+                "Please pick an option for: " + ", ".join(f"**{label}**" for label in missing), ephemeral=True
+            )
+            return
+        # Not stopped here: if they close the form by accident, Continue still works.
+        await interaction.response.send_modal(ApplicationModal(self.bot, self.settings, self.answers()))
+
+    async def on_timeout(self) -> None:
+        if self.message is not None:
+            try:
+                await self.message.edit(content="This timed out. Click the panel button again to apply.", view=None)
+            except discord.HTTPException:
+                pass
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
+        log.exception("Application dropdowns failed", exc_info=error)
+        await safe_reply(interaction, "Something went wrong. Please click the panel button again.")
 
 
 class PanelView(discord.ui.View):
@@ -170,6 +263,15 @@ class PanelView(discord.ui.View):
         if existing is not None:
             where = f"<#{existing.channel_id}>" if existing.channel_id else "being created"
             await interaction.response.send_message(f"You already have an open application: {where}", ephemeral=True)
+            return
+        if ctx.settings.choice_questions:
+            # Dropdown questions first; its Continue button opens the form.
+            view = ChoiceStepView(self.bot, ctx.settings)
+            await interaction.response.send_message(CHOICE_STEP_TEXT, view=view, ephemeral=True)
+            try:
+                view.message = await interaction.original_response()  # only needed to tidy up on timeout
+            except (discord.HTTPException, OSError):
+                pass
             return
         await interaction.response.send_modal(ApplicationModal(self.bot, ctx.settings))
 
@@ -224,6 +326,10 @@ class TicketControlView(discord.ui.View):
         await interaction.response.defer(ephemeral=True, thinking=True)
         ctx = await load_context(self.bot, ticket.guild_id)
         lines = [f"Accept <@{ticket.user_id}>?"]
+        picked, _ = ctx.settings.picked_roles(ticket.answers)
+        if picked:
+            roles = ", ".join(f"<@&{role_id}>" for role_id in dict.fromkeys(role_id for _, role_id in picked))
+            lines.append(f"Their answers also give them: {roles}.")
         if ctx.settings.extra_role_choices:
             lines.append("Optionally pick an extra role, then press **Confirm accept**.")
         # TODO: ``require_attachment`` only warns; Accept still proceeds. If admins

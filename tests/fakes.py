@@ -260,6 +260,7 @@ def fake_interaction(guild: FakeGuild | None, user: Any, channel: Any = None) ->
     interaction.response.defer = AsyncMock()
     interaction.followup.send = AsyncMock()
     interaction.edit_original_response = AsyncMock()
+    interaction.original_response = AsyncMock()
     return interaction
 
 

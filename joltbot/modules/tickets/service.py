@@ -330,7 +330,7 @@ class TicketManager:
             return "The applicant is no longer in the server. Use 🔒 Close instead."
         if not roles_by_id(guild, ctx.settings.accept_role_ids):
             return "None of the 'role given on accept' roles exist any more. Fix this on the dashboard."
-        roles = self._roles_for_accept(guild, ctx, extra_role.id if extra_role else None)
+        roles, notes = self._roles_for_accept(guild, ctx, ticket, extra_role.id if extra_role else None)
         pending = guild.get_role(ctx.settings.pending_role_id or 0)
         if problems := hierarchy_problems(guild, [*roles, *([pending] if pending else [])]):
             return "\n".join(problems)
@@ -362,6 +362,8 @@ class TicketManager:
                 log.exception("Guild %s: accept of ticket #%s failed", guild.id, ticket.id)
                 return DISCORD_TROUBLE
 
+            for note in notes:
+                await store.add_note(self.db, ticket.id, note)
             if not await self._dm(member, embeds.welcome_dm(ctx.settings, guild, member, extra_role)):
                 await store.add_note(self.db, ticket.id, "Welcome DM failed (applicant's DMs are closed).")
             log.info("Guild %s: ticket #%s accepted by %s", guild.id, ticket.id, staff.id)
@@ -371,23 +373,34 @@ class TicketManager:
         return None
 
     def _roles_for_accept(
-        self, guild: discord.Guild, ctx: TicketContext, extra_role_id: int | None
-    ) -> list[discord.Role]:
-        """Every role an accept gives: the server's accept roles plus the extra role staff picked.
+        self, guild: discord.Guild, ctx: TicketContext, ticket: Ticket, extra_role_id: int | None
+    ) -> tuple[list[discord.Role], list[str]]:
+        """Every role an accept gives.
 
-        Used by ``accept`` and by ``_confirm_accept_roles``, so an accept that
-        is finished after a restart gives exactly the same roles.
+        That is the server's accept roles, the extra role staff picked, and the
+        roles of the dropdown options the applicant picked. Used by ``accept``
+        and by ``_confirm_accept_roles``, so an accept that is finished after a
+        restart gives exactly the same roles.
 
         Args:
             guild: Guild owning the ticket.
             ctx: Fresh ticket settings for the guild.
+            ticket: The ticket being accepted (its answers hold the picks).
             extra_role_id: The extra role chosen on Accept, if any.
 
         Returns:
-            The roles that still exist, without repeats.
+            ``(roles, notes)``: the roles that still exist, without repeats, and
+            a note for the log for each picked role that can't be given.
         """
         role_ids = [*ctx.settings.accept_role_ids, *([extra_role_id] if extra_role_id else [])]
-        return roles_by_id(guild, dict.fromkeys(role_ids))
+        picked, dropped = ctx.settings.picked_roles(ticket.answers)
+        notes = [f"The role for '{name}' is no longer set up, so it was not given." for name in dropped]
+        for name, role_id in picked:
+            if guild.get_role(role_id) is None:
+                notes.append(f"The role for '{name}' no longer exists, so it was not given.")
+            else:
+                role_ids.append(role_id)
+        return roles_by_id(guild, dict.fromkeys(role_ids)), notes
 
     async def _confirm_accept_roles(self, guild: discord.Guild, ctx: TicketContext, ticket: Ticket) -> None:
         """Finish the member's side of an accept that was cut short.
@@ -414,7 +427,8 @@ class TicketManager:
                 self.db, ticket.id, "The applicant is no longer in the server; their roles were not checked."
             )
             return
-        missing = [r for r in self._roles_for_accept(guild, ctx, ticket.extra_role_id) if r not in member.roles]
+        roles, notes = self._roles_for_accept(guild, ctx, ticket, ticket.extra_role_id)
+        missing = [r for r in roles if r not in member.roles]
         pending = guild.get_role(ctx.settings.pending_role_id or 0)
         reason = f"Application accepted (ticket #{ticket.id}); finished after a restart"
         try:
@@ -426,6 +440,8 @@ class TicketManager:
             log.warning("Guild %s: couldn't confirm roles for ticket #%s: %s", guild.id, ticket.id, e)
             await store.add_note(self.db, ticket.id, unconfirmed)
             return
+        for note in notes:
+            await store.add_note(self.db, ticket.id, note)
         if missing:
             # The accept never got as far as the roles, so the welcome DM wasn't sent either.
             await store.add_note(self.db, ticket.id, "Roles were given after a restart.")

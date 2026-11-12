@@ -12,15 +12,18 @@ import discord
 import pytest
 from sqlalchemy import update
 
+from joltbot.core.guild_settings import load_module, save_module
 from joltbot.core.models import Ticket
 from joltbot.core.types import utcnow
 from joltbot.modules.tickets import store
 from joltbot.modules.tickets.context import load_context
 from joltbot.modules.tickets.service import DISCORD_TROUBLE, STUCK_AFTER_SECONDS, TicketManager
+from joltbot.modules.tickets.settings import TicketSettings
 from joltbot.modules.tickets.views import (
     NOT_SET_UP,
     AcceptView,
     ApplicationModal,
+    ChoiceStepView,
     CloseConfirmView,
     DenyActionView,
     PanelView,
@@ -30,6 +33,7 @@ from joltbot.modules.tickets.views import (
 from .conftest import GUILD_A, GUILD_B
 from .fakes import (
     BOT_ROLE_POSITION,
+    TEST_ACTOR,
     FakeBot,
     FakeGuild,
     FakeRole,
@@ -679,3 +683,195 @@ async def test_recovery_leaves_a_ticket_alone_while_its_channel_is_being_created
     await world.manager.recover(world.guild)
 
     assert await store.get(world.db, ticket_id) is not None
+
+
+# ------------------------------------------------------------------ dropdown questions that give roles
+
+INFANTRY_ROLE, CAVALRY_ROLE, WHALE_ROLE = 54, 55, 56
+DROPDOWNS = [
+    {
+        "label": "Troop type",
+        "options": [{"label": "Infantry", "role_id": INFANTRY_ROLE}, {"label": "Cavalry", "role_id": CAVALRY_ROLE}],
+    },
+    {
+        "label": "Spender tier",
+        "required": False,
+        "options": [{"label": "Free to play"}, {"label": "Whale", "role_id": WHALE_ROLE}],
+    },
+]
+# What an applicant who picked Cavalry and Whale has stored with their application.
+PICKS = [
+    {"label": "Troop type", "value": "Cavalry", "role_id": str(CAVALRY_ROLE)},
+    {"label": "Spender tier", "value": "Whale", "role_id": str(WHALE_ROLE)},
+]
+
+
+async def _set_dropdowns(world, questions):
+    """Save the server's dropdown questions, as the dashboard would."""
+    for role_id, name in ((INFANTRY_ROLE, "Infantry"), (CAVALRY_ROLE, "Cavalry"), (WHALE_ROLE, "Whale")):
+        if world.guild.get_role(role_id) is None:
+            world.guild.add_role(FakeRole(role_id, name, position=7))
+    async with world.db.session() as session, session.begin():
+        current = await load_module(session, GUILD_A, "tickets")
+        saved = current.config.model_dump(mode="json")
+        config = TicketSettings.model_validate({**saved, "choice_questions": questions})
+        await save_module(
+            session,
+            GUILD_A,
+            "tickets",
+            enabled=True,
+            config=config,
+            expected_version=current.version,
+            actor=TEST_ACTOR,
+        )
+
+
+async def _open_with_picks(world):
+    await _set_dropdowns(world, DROPDOWNS)
+    ctx = await load_context(world.bot, GUILD_A)
+    channel, error = await world.manager.create_ticket(world.applicant, ctx, [*ANSWERS, *PICKS])
+    assert error is None
+    return await store.get_active_by_user(world.db, GUILD_A, APPLICANT_ID), channel
+
+
+async def _dropdown_step(world):
+    """The applicant clicks the panel button on a server with dropdown questions; returns the view."""
+    await _set_dropdowns(world, DROPDOWNS)
+    click = fake_interaction(world.guild, world.applicant)
+    await PanelView(world.bot).open_application(click)
+    click.response.send_modal.assert_not_awaited()  # the form comes after the dropdowns
+    view = click.response.send_message.await_args.kwargs["view"]
+    assert isinstance(view, ChoiceStepView)
+    assert click.response.send_message.await_args.kwargs["ephemeral"] is True
+    return view
+
+
+async def _pick(world, view, question: int, option: int):
+    click = fake_interaction(world.guild, world.applicant)
+    view.selects[question]._refresh_state(click, {"values": [str(option)]})
+    await view.selects[question].callback(click)
+    click.response.defer.assert_awaited_once()
+
+
+async def test_dropdown_questions_are_shown_before_the_form(world):
+    view = await _dropdown_step(world)
+    troops, spender = view.selects
+    assert troops.placeholder == "Troop type" and [o.label for o in troops.options] == ["Infantry", "Cavalry"]
+    assert spender.placeholder == "Spender tier (optional)"
+    view.stop()
+
+
+async def test_continue_waits_until_every_required_dropdown_is_answered(world):
+    view = await _dropdown_step(world)
+    await _pick(world, view, question=1, option=1)  # only the optional one
+
+    click = fake_interaction(world.guild, world.applicant)
+    await view.continue_button.callback(click)
+
+    click.response.send_modal.assert_not_awaited()
+    assert "Troop type" in click.response.send_message.await_args.args[0]
+    view.stop()
+
+
+async def test_picks_travel_with_the_form_into_the_ticket(world):
+    view = await _dropdown_step(world)
+    await _pick(world, view, question=0, option=1)  # Cavalry
+    await _pick(world, view, question=1, option=0)  # Free to play: an answer without a role
+
+    click = fake_interaction(world.guild, world.applicant)
+    await view.continue_button.callback(click)
+    modal = click.response.send_modal.await_args.args[0]
+    assert isinstance(modal, ApplicationModal)
+
+    submit = fake_interaction(world.guild, world.applicant)
+    modal.inputs[0][1]._refresh_state(submit, {"value": "A friend"})
+    await modal.on_submit(submit)
+
+    ticket = await store.get_active_by_user(world.db, GUILD_A, APPLICANT_ID)
+    assert ticket.answers == [
+        {"label": "How did you find this server?", "value": "A friend"},
+        {"label": "Anything else staff should know?", "value": ""},
+        {"label": "Troop type", "value": "Cavalry", "role_id": str(CAVALRY_ROLE)},
+        {"label": "Spender tier", "value": "Free to play"},
+    ]
+    application = world.guild.created_channels[0].send.await_args_list[0].kwargs["embed"]
+    assert _fields(application)["Troop type"] == "Cavalry" and _fields(application)["Spender tier"] == "Free to play"
+    view.stop()
+
+
+async def test_an_optional_dropdown_left_empty_is_simply_not_an_answer(world):
+    view = await _dropdown_step(world)
+    await _pick(world, view, question=0, option=0)
+
+    click = fake_interaction(world.guild, world.applicant)
+    await view.continue_button.callback(click)
+
+    modal = click.response.send_modal.await_args.args[0]
+    assert modal.choices == [{"label": "Troop type", "value": "Infantry", "role_id": str(INFANTRY_ROLE)}]
+    view.stop()
+
+
+async def test_accept_gives_the_roles_the_applicant_picked(world):
+    ticket, _ = await _open_with_picks(world)
+
+    assert await world.manager.accept(world.guild, world.staff, ticket, None) is None
+    ticket = await _reload(world, ticket)
+
+    given = {role.id for role in world.applicant.roles}
+    assert {ACCEPT_ROLE, CAVALRY_ROLE, WHALE_ROLE} <= given and INFANTRY_ROLE not in given
+    assert ticket.note_lines == []
+    log_fields = _fields(world.log.send.await_args_list[0].kwargs["embed"])
+    assert log_fields["Troop type"] == "Cavalry" and log_fields["Spender tier"] == "Whale"
+
+
+async def test_a_pick_whose_role_is_no_longer_an_option_is_not_given(world):
+    # Stored picks are only a request. What may be given is decided by the settings at accept time,
+    # so an admin who removes a role from the options also stops it for tickets already open.
+    ticket, _ = await _open_with_picks(world)
+    spender_without_roles = {"label": "Spender tier", "options": [{"label": "Free to play"}, {"label": "Whale"}]}
+    await _set_dropdowns(world, [DROPDOWNS[0], spender_without_roles])
+
+    assert await world.manager.accept(world.guild, world.staff, ticket, None) is None
+    ticket = await _reload(world, ticket)
+
+    given = {role.id for role in world.applicant.roles}
+    assert CAVALRY_ROLE in given and WHALE_ROLE not in given
+    assert ticket.note_lines == ["The role for 'Spender tier: Whale' is no longer set up, so it was not given."]
+
+
+async def test_accept_is_refused_when_a_picked_role_is_above_joltbot(world):
+    ticket, _ = await _open_with_picks(world)
+    world.guild.get_role(CAVALRY_ROLE).position = BOT_ROLE_POSITION + 1
+
+    error = await world.manager.accept(world.guild, world.staff, ticket, None)
+
+    assert "above Cavalry" in error
+    assert (await store.get(world.db, ticket.id)).status == "open"  # nothing was given; staff can retry
+    world.applicant.add_roles.assert_not_awaited()
+
+
+async def test_the_accept_prompt_says_which_roles_the_picks_will_give(world):
+    ticket, channel = await _open_with_picks(world)
+    click = fake_interaction(world.guild, world.staff, channel)
+
+    await TicketControlView(world.bot).accept(click)
+
+    prompt = click.followup.send.await_args
+    assert f"<@&{CAVALRY_ROLE}>" in prompt.args[0] and f"<@&{WHALE_ROLE}>" in prompt.args[0]
+    prompt.kwargs["view"].stop()
+
+
+async def test_an_accept_cut_short_by_a_restart_gives_the_picked_roles_too(world):
+    await _set_dropdowns(world, DROPDOWNS)
+    ctx = await load_context(world.bot, GUILD_A)
+    await world.manager.create_ticket(world.applicant, ctx, [*ANSWERS, *PICKS])
+    ticket = await store.get_active_by_user(world.db, GUILD_A, APPLICANT_ID)
+    assert await store.claim(world.db, ticket.id, outcome="accepted", handled_by=STAFF_ID)
+    long_ago = utcnow() - timedelta(seconds=STUCK_AFTER_SECONDS + 60)
+    async with world.db.session() as session, session.begin():
+        await session.execute(update(Ticket).where(Ticket.id == ticket.id).values(claimed_at=long_ago))
+
+    await world.manager.recover(world.guild)
+    await settle(world.manager)
+
+    assert {ACCEPT_ROLE, CAVALRY_ROLE, WHALE_ROLE} <= {role.id for role in world.applicant.roles}
