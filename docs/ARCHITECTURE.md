@@ -46,7 +46,7 @@ module's cog; the dashboard mounts each module's FastAPI router.
    - `PrivilegedIntentsRequired` → exit **3**.
    - Other errors → sleep with growing delay (10s → 300s), then retry.
 4. `JoltBot.setup_hook()` (`bot/client.py`):
-   - Load `guild_sync` extension.
+   - Load the `guild_sync` and `heartbeat` extensions.
    - For each registry entry with a `cog`, `load_extension(module.cog)`. A module
      that fails to load is logged at ERROR and skipped (`bot.failed_modules`);
      the other modules keep working.
@@ -165,7 +165,7 @@ Key rules (see `modules/tickets/service.py` and `store.py`):
 | `audit_log` | Who changed settings |
 | `guild_issues` | Bot problems with no interaction to reply on |
 | `web_sessions` | Dashboard logins |
-| `bot_meta` | Slash sync hash, migration flags |
+| `bot_meta` | Slash sync hash, migration flags, bot heartbeat |
 
 Schema is owned by Alembic (`migrations/`). Startup refuses to run if the DB
 version is not at head (`core/schema.py`). SQLite uses WAL and a 5s busy
@@ -189,5 +189,9 @@ Guild-owned rows use `ON DELETE CASCADE` when a left guild is purged.
   de-duplicated and rate-limited.
 - Ticket recovery loop + claim/release.
 - Issues table for admin-visible problems.
+- Bot heartbeat (`core/health.py`, `bot/heartbeat.py`): written to `bot_meta`
+  every minute while the gateway connection is up; stale after 3 minutes. Read by
+  `/health/bot`, the overview banner and the bot's Docker health check
+  (`python -m joltbot.bot.healthcheck`). `/health` stays independent of the bot.
 - Optimistic concurrency on settings saves (`StaleSettingsError`).
 - Foreign role/channel IDs from other guilds rejected on ticket settings save.

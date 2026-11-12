@@ -17,6 +17,7 @@ from sqlalchemy import select, update
 from joltbot.core.config import AppConfig
 from joltbot.core.discord_rest import CATEGORY, TEXT_CHANNEL, Channel, DiscordError, GuildData, Role
 from joltbot.core.guild_settings import load_module
+from joltbot.core.health import write_heartbeat
 from joltbot.core.issues import record_issue
 from joltbot.core.models import AuditLog, GuildIssue, WebSession
 from joltbot.core.permissions import ADMINISTRATOR, MANAGE_GUILD
@@ -469,3 +470,22 @@ async def test_general_page_toggles_modules(db, alice):
     assert r.status_code == 303
     async with db.session() as session:
         assert (await load_module(session, GUILD_A, "general")).config.embed_color == "#123456"
+
+
+# --------------------------------------------------------------------------- bot status banner
+
+
+async def test_overview_warns_when_the_bot_is_offline(db, alice):
+    page = html.unescape((await alice.get(f"/servers/{GUILD_A}")).text)
+    assert "JoltBot is offline right now" in page and "last connected" not in page  # it never reported in
+
+    async with db.session() as session, session.begin():
+        await write_heartbeat(session, utcnow() - timedelta(minutes=10))
+    page = html.unescape((await alice.get(f"/servers/{GUILD_A}")).text)
+    assert "JoltBot is offline right now" in page and "It was last connected at" in page
+
+
+async def test_overview_has_no_warning_while_the_bot_is_online(db, alice):
+    async with db.session() as session, session.begin():
+        await write_heartbeat(session)
+    assert "offline" not in (await alice.get(f"/servers/{GUILD_A}")).text

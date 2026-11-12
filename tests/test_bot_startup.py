@@ -38,6 +38,7 @@ async def test_all_modules_load_and_command_sync_is_scheduled(bot):
     await bot.setup_hook()
     assert bot.failed_modules == []
     assert bot.get_cog("Tickets") is not None and bot.get_cog("GuildSync") is not None
+    assert bot.get_cog("Heartbeat") is not None
     assert len(bot._background) == 1  # the slash-command sync, waiting for the bot to be ready
 
 

@@ -43,9 +43,18 @@ services:
     init: true
     environment:
       LOG_DIR: ""  # console only; read it with `docker compose logs`
-    # No health check: the bot has no web server. Docker restarts it if it exits.
-    # Note: Docker can't skip restarts for "bad token" (exit 2) like systemd does,
-    # but it backs off to one restart a minute. Fix .env, then `docker compose up -d`.
+    # The bot has no web server to probe. While connected to Discord it writes a
+    # heartbeat to the database every minute, and this check reads it. Docker only
+    # reports the result (`docker compose ps`); it does not restart on "unhealthy".
+    healthcheck:
+      test: ["CMD", "python", "-m", "joltbot.bot.healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 2
+      start_period: 120s
+    # Docker restarts the bot if it exits. It can't skip restarts for "bad token"
+    # (exit 2) like systemd does, but it backs off to one restart a minute.
+    # Fix .env, then `docker compose up -d`.
     restart: unless-stopped
     depends_on:
       migrate:

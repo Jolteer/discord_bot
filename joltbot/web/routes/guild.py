@@ -14,6 +14,7 @@ from sqlalchemy import delete, select
 
 from ...core.discord_rest import DiscordError
 from ...core.guild_settings import load_all
+from ...core.health import bot_status
 from ...core.issues import list_issues
 from ...core.models import AuditLog, GuildIssue
 from ...modules.registry import MODULES
@@ -59,6 +60,7 @@ async def overview(request: Request, access: RequireGuild):
     async with get_db(request).session() as session:
         states = await load_all(session, access.guild_id)
         issues = await list_issues(session, access.guild_id)
+        bot = await bot_status(session)
     modules = [
         {
             "name": m.name,
@@ -77,6 +79,8 @@ async def overview(request: Request, access: RequireGuild):
             **guild_context(access, "overview"),
             "modules": modules,
             "issues": [{"id": i.id, "message": i.message, "count": i.count, "last_seen": i.last_seen} for i in issues],
+            "bot_offline": not bot.online,
+            "bot_last_seen": bot.last_seen,
         },
     )
 

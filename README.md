@@ -268,7 +268,7 @@ Open <http://localhost:8000>. What happens on `up`:
 1. **migrate** runs `alembic upgrade head` once and exits.
 2. **bot** and **web** start only after migrate **succeeded** (`depends_on: condition: service_completed_successfully`). If a migration fails, neither starts, and `docker compose logs migrate` shows why.
 3. Both share the SQLite file in the `joltbot-data` volume. WAL mode plus a 5-second busy timeout lets them write at the same time.
-4. **web** has a health check (`GET /health`, which also checks the database). **bot** has no web server, so it has no health check. Docker restarts it if it ever exits.
+4. **web** has a health check (`GET /health`, which also checks the database). **bot** has no web server, so while it is connected to Discord it writes a heartbeat to the database every minute, and its health check reads that. `docker compose ps` shows the bot as `healthy` about two minutes after start, and `unhealthy` once it has been disconnected for three minutes. Docker restarts the bot if it exits, but not when it is only unhealthy.
 
 The image:
 - is built in three stages: frontend files, Python packages, final image
@@ -471,6 +471,12 @@ docker compose up -d                                             # restart so bo
 - It works when the bot is offline too, because a webhook needs no bot connection. A wrong token or a missing setting is reported on every restart attempt (about once a minute under Docker) until it's fixed.
 - Server admins don't see these. Problems in their own server appear as warnings on their dashboard.
 
+**Is the bot up?** Three places show it, all reading the same heartbeat:
+
+- `docker compose ps`: the bot is `healthy` or `unhealthy`.
+- The dashboard overview shows "JoltBot is offline right now" to server admins.
+- `GET /health/bot` on the dashboard answers 200 while the bot is connected and 503 otherwise. Point a free uptime monitor at `https://your-domain/health/bot` to be told when the bot goes down, including when the whole server is down (which the alert webhook can't report).
+
 **Backups:** the `joltbot-data` volume holds all settings and ticket state. A safe copy while JoltBot keeps running:
 
 ```bash
@@ -494,6 +500,8 @@ Put both lines in a small script and run it nightly with cron. Each server's log
 | bot/web never start; migrate "Exited (1)" | A migration failed. Read `docker compose logs migrate`. |
 | "The database schema is out of date" / "has no tables" | Docker: `docker compose up -d` (runs migrate). Without Docker: `.venv/bin/alembic upgrade head`. |
 | web is "unhealthy" | `docker compose logs web`. `/health` returns 503 when the database can't be opened. |
+| bot is "unhealthy" | It is running but has not been connected to Discord for 3 minutes. `docker compose logs bot` shows why (Discord outage, network, or it is still retrying its start-up). `docker inspect joltbot-bot-1 --format '{{json .State.Health.Log}}'` shows the last checks. |
+| Dashboard says "JoltBot is offline right now" | Same cause: no heartbeat from the bot for 3 minutes. Check `docker compose ps` and the bot's logs. |
 | Login says "redirect_uri" is invalid | The Developer Portal redirect must be exactly `PUBLIC_BASE_URL/auth/callback`. |
 | Caddy can't get a certificate | DNS must point at the server, ports 80/443 must be open, and `DOMAIN` must be set in `.env`. |
 | Dashboard says JoltBot isn't in the server | Invite it from the server list, then reload. |

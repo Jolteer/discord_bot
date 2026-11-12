@@ -2,6 +2,15 @@
 {% block page %}
 <h1 class="text-xl font-bold tracking-tight">Overview</h1>
 
+{% if bot_offline %}
+  <div class="mt-4 rounded-[10px] border border-amber-800/80 bg-amber-950/40 p-3 text-sm text-amber-200" role="status">
+    <p class="font-semibold">⚠️ JoltBot is offline right now.</p>
+    <p class="mt-1">Buttons and commands in Discord won't respond until it's back.
+      {% if bot_last_seen %}It was last connected at {{ bot_last_seen.strftime('%Y-%m-%d %H:%M') }} UTC.{% endif %}
+      Settings you save here are kept and apply as soon as it returns.</p>
+  </div>
+{% endif %}
+
 {% if issues %}
   <div class="mt-4 space-y-2">
     <h2 class="jb-section-label text-red-300">Problems JoltBot ran into</h2>

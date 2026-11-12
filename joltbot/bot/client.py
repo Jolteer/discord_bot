@@ -98,6 +98,7 @@ class JoltBot(commands.Bot):
         fails, startup fails.
         """
         await self.load_extension("joltbot.bot.guild_sync")
+        await self.load_extension("joltbot.bot.heartbeat")
         self.failed_modules = []
         for module in MODULES.values():
             if not module.cog:
