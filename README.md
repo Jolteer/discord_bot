@@ -106,6 +106,7 @@ joltbot/
 migrations/               # Alembic database migrations
 scripts/migrate_koc.py    # one-time King of Chaos migration
 scripts/backup.py         # makes one database backup (used by deploy/backup.sh)
+scripts/preview_site.py   # runs the website with example data, no Discord needed (section 4)
 docs/ARCHITECTURE.md      # startup, routing, storage, external APIs
 deploy/Caddyfile          # HTTPS proxy for Docker Compose
 deploy/backup.sh          # nightly database backup (Docker); deploy/update.sh updates the server
@@ -247,6 +248,21 @@ Invoke-WebRequest https://github.com/tailwindlabs/tailwindcss/releases/download/
 ```
 
 `app.css` is a build output, so it's in `.gitignore`.
+
+**Where the look of the site lives:**
+
+- `joltbot/web/templates/_styles.css` is the design system: the colour, type, radius and shadow tokens (CSS variables) and every shared component (`jb-btn`, `jb-card`, `jb-input`, the Discord message mock-ups, …). The real build imports it through `styles/input.css`, and the CDN fallback includes the very same file, so there is one place to change.
+- `joltbot/web/templates/_icons.html` holds the icons as inline SVG, and `_form.html` the form pieces every settings page uses.
+- `joltbot/web/static/fonts/` holds the two fonts (Inter and Bricolage Grotesque, both under the SIL Open Font License), served from the site itself.
+- `joltbot/web/styles/og-image.html` is the source of `static/og-image.png`, the picture shown when a link to the site is shared. The comment at the top says how to render it again.
+
+### Previewing the site without Discord
+
+```powershell
+python -m scripts.preview_site           # then open http://localhost:8000
+```
+
+This starts the dashboard with a stand-in for Discord and a throwaway database of example data. "Login with Discord" logs you in at once as an example admin, so every page can be clicked through and every form saved. It needs no `.env`, and it reads and changes nothing real. Add `--bot-down` to see the dashboard as it looks while the bot is disconnected. It is for working on templates and styles only: it listens on this computer alone, and "Add to Discord" leads nowhere useful because there is no real application behind it.
 
 ### Changing dependencies
 
