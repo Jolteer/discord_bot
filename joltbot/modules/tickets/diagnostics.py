@@ -66,10 +66,7 @@ def run_diagnostics(guild: discord.Guild, settings: TicketSettings, enabled: boo
                 out.append(Finding(level, f"Missing server permission: **{label}**."))
 
     # --- roles JoltBot gives or removes: must exist and sit below JoltBot's role ---
-    assignable: list[tuple[str, int]] = [("Role given on accept", rid) for rid in settings.accept_role_ids]
-    if settings.pending_role_id:
-        assignable.append(("Pending role", settings.pending_role_id))
-    assignable += [(f"Extra role '{c.label}'", c.role_id) for c in settings.extra_role_choices]
+    assignable = [(role.description, role.role_id) for role in settings.assignable_roles()]
     hierarchy_ok = True
     for name, rid in assignable:
         role = guild.get_role(rid)

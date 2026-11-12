@@ -277,14 +277,7 @@ class Tickets(commands.GroupCog, group_name="tickets", group_description="Ticket
             lines.append("⚠️ Couldn't pin it (I need **Pin Messages** there). Pin it by hand if you like.")
         except discord.HTTPException:
             lines.append("⚠️ Couldn't pin it (pin limit reached?).")
-        roles = roles_by_id(
-            guild,
-            [
-                *ctx.settings.accept_role_ids,
-                ctx.settings.pending_role_id or 0,
-                *(c.role_id for c in ctx.settings.extra_role_choices),
-            ],
-        )
+        roles = roles_by_id(guild, dict.fromkeys(r.role_id for r in ctx.settings.assignable_roles()))
         if problems := hierarchy_problems(guild, roles):
             lines.append("\n**Fix before accepting anyone:**")
             lines += [f"• {p}" for p in problems]

@@ -7,6 +7,8 @@ saves here can actually be sent to Discord.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ...core.types import OptionalSnowflake, Snowflake
@@ -29,6 +31,40 @@ class ExtraRoleChoice(BaseModel):
     label: str = Field(min_length=1, max_length=100)
     role_id: Snowflake
     emoji: str | None = Field(None, max_length=64)
+
+
+class ChoiceOption(BaseModel):
+    """One option of a dropdown question. Picking it can give a role when the ticket is accepted."""
+
+    label: str = Field(min_length=1, max_length=100)
+    role_id: OptionalSnowflake = None  # None = just an answer, no role
+
+
+class ChoiceQuestion(BaseModel):
+    """A question the applicant answers by picking from a list, before the form.
+
+    For anything with a fixed set of answers (a team, a region, a playstyle),
+    where each answer can map to a role.
+    """
+
+    label: str = Field(min_length=1, max_length=45)
+    required: bool = True
+    options: list[ChoiceOption] = Field(min_length=2, max_length=10)
+
+    @model_validator(mode="after")
+    def _distinct_options(self) -> ChoiceQuestion:
+        labels = [option.label.casefold() for option in self.options]
+        if len(labels) != len(set(labels)):
+            raise ValueError("Each option needs a different label.")
+        return self
+
+
+class AssignableRole(NamedTuple):
+    """One role JoltBot hands out for this server, and where in the settings it comes from."""
+
+    group: str  # the dashboard field, e.g. "Roles given on accept"
+    description: str  # this one role, e.g. "Extra role 'Team A'"
+    role_id: int
 
 
 class TicketMessages(BaseModel):
@@ -126,6 +162,9 @@ class TicketSettings(ModuleSettingsModel):
     # --- application form ---
     form_questions: list[FormQuestion] = Field(default_factory=_default_questions, min_length=1, max_length=5)
     require_attachment: bool = False  # warn staff on Accept if the applicant uploaded no file
+    # Dropdowns the applicant fills in before the form. At most 4: they are shown in one
+    # Discord message, which has 5 rows, and one row holds the Continue button.
+    choice_questions: list[ChoiceQuestion] = Field(default_factory=list, max_length=4)
 
     # --- behaviour ---
     delete_delay_seconds: int = Field(10, ge=0, le=3600)
@@ -146,7 +185,39 @@ class TicketSettings(ModuleSettingsModel):
         extra_ids = [c.role_id for c in self.extra_role_choices]
         if len(extra_ids) != len(set(extra_ids)):
             raise ValueError("Each extra role choice must use a different role.")
+        if self.pending_role_id is not None and self.pending_role_id in self.choice_role_ids:
+            raise ValueError("The pending role can't also be given by a dropdown option.")
         return self
+
+    @property
+    def choice_role_ids(self) -> set[int]:
+        """Every role a dropdown option gives."""
+        return {o.role_id for q in self.choice_questions for o in q.options if o.role_id is not None}
+
+    def assignable_roles(self) -> list[AssignableRole]:
+        """Every role JoltBot gives or takes away in this server, in dashboard order.
+
+        This is the one list behind the role-order checks, the diagnostics and
+        the dashboard's "powerful role" rule. A new way of handing out a role
+        must be added here, so that it gets all of those checks.
+
+        Returns:
+            One entry per role. Staff and ping roles are not included: JoltBot
+            reads those but never assigns them.
+        """
+        roles = [AssignableRole("Roles given on accept", "Role given on accept", rid) for rid in self.accept_role_ids]
+        if self.pending_role_id is not None:
+            roles.append(AssignableRole("Pending role", "Pending role", self.pending_role_id))
+        roles += [
+            AssignableRole("Extra role choices", f"Extra role '{c.label}'", c.role_id) for c in self.extra_role_choices
+        ]
+        roles += [
+            AssignableRole("Dropdown questions", f"Dropdown role '{q.label}: {o.label}'", o.role_id)
+            for q in self.choice_questions
+            for o in q.options
+            if o.role_id is not None
+        ]
+        return roles
 
     @property
     def effective_ping_role_ids(self) -> list[int]:

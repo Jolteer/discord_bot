@@ -164,10 +164,8 @@ def foreign_id_errors(settings: TicketSettings, data: GuildData) -> list[str]:
 
     role_fields = [
         ("Staff roles", settings.staff_role_ids, False),
-        ("Roles given on accept", settings.accept_role_ids, True),
         ("Ping roles", settings.ping_role_ids, False),
-        ("Pending role", [settings.pending_role_id] if settings.pending_role_id else [], True),
-        ("Extra role choices", [c.role_id for c in settings.extra_role_choices], True),
+        *((label, ids, True) for label, ids in _granted_roles(settings)),
     ]
     for label, ids, assigned in role_fields:
         if any(i not in roles for i in ids):
@@ -187,12 +185,11 @@ def foreign_id_errors(settings: TicketSettings, data: GuildData) -> list[str]:
 
 
 def _granted_roles(settings: TicketSettings) -> list[tuple[str, list[int]]]:
-    """Every way JoltBot hands out a role, as (form label, role IDs)."""
-    return [
-        ("Roles given on accept", list(settings.accept_role_ids)),
-        ("Pending role", [settings.pending_role_id] if settings.pending_role_id else []),
-        ("Extra role choices", [c.role_id for c in settings.extra_role_choices]),
-    ]
+    """Every way JoltBot hands out a role, as (form label, role IDs). Unused ways are left out."""
+    groups: dict[str, list[int]] = {}
+    for role in settings.assignable_roles():
+        groups.setdefault(role.group, []).append(role.role_id)
+    return list(groups.items())
 
 
 def powerful_role_errors(
@@ -221,8 +218,10 @@ def powerful_role_errors(
         return []
     roles = {r.id: r for r in data.roles}
     errors = []
-    for (label, new_ids), (_, old_ids) in zip(_granted_roles(settings), _granted_roles(previous), strict=True):
-        for role_id in new_ids:
+    already_saved = dict(_granted_roles(previous))
+    for label, new_ids in _granted_roles(settings):
+        old_ids = already_saved.get(label, [])
+        for role_id in dict.fromkeys(new_ids):
             if role_id in old_ids or role_id not in roles:
                 continue
             if names := elevated_permission_names(roles[role_id].permissions):
@@ -270,11 +269,7 @@ def setup_warnings(settings: TicketSettings, data: GuildData) -> list[str]:
 
     roles = {r.id: r for r in data.roles}
     top = data.bot_top_position()
-    given = [
-        *settings.accept_role_ids,
-        *([settings.pending_role_id] if settings.pending_role_id else []),
-        *(c.role_id for c in settings.extra_role_choices),
-    ]
+    given = dict.fromkeys(r.role_id for r in settings.assignable_roles())  # each role once, in order
     too_high = [roles[i].name for i in given if i in roles and roles[i].position >= top]
     if too_high:
         warnings.append(
@@ -283,7 +278,7 @@ def setup_warnings(settings: TicketSettings, data: GuildData) -> list[str]:
         )
 
     for label, ids in _granted_roles(settings):
-        for role_id in ids:
+        for role_id in dict.fromkeys(ids):
             if role_id in roles and (names := elevated_permission_names(roles[role_id].permissions)):
                 warnings.append(
                     f"{label}: JoltBot gives out {roles[role_id].name}, which has powerful permissions "

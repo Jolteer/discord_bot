@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from joltbot.modules.tickets.settings import FormQuestion, TicketSettings
+from joltbot.modules.tickets.settings import ChoiceOption, ChoiceQuestion, FormQuestion, TicketSettings
 
 
 def test_defaults_are_valid_and_need_setup():
@@ -59,3 +59,81 @@ def test_fully_configured_has_no_problems():
         panel_channel_id=1, ticket_category_id=2, log_channel_id=3, accept_role_ids=[4], staff_role_ids=[5]
     )
     assert settings.setup_problems() == []
+
+
+# ------------------------------------------------------------------ dropdown questions
+
+TROOPS = {
+    "label": "Troop type",
+    "options": [
+        {"label": "Infantry", "role_id": "900000000000000041"},
+        {"label": "Cavalry", "role_id": "900000000000000042"},
+        {"label": "Not sure yet"},
+    ],
+}
+
+
+def test_servers_start_without_dropdown_questions():
+    assert TicketSettings().choice_questions == []
+
+
+def test_a_dropdown_option_can_give_a_role_and_the_id_is_saved_as_a_string():
+    settings = TicketSettings.model_validate({"choice_questions": [TROOPS]})
+    (question,) = settings.choice_questions
+    assert question.required is True
+    assert [(o.label, o.role_id) for o in question.options] == [
+        ("Infantry", 900000000000000041),
+        ("Cavalry", 900000000000000042),
+        ("Not sure yet", None),  # an option doesn't have to give a role
+    ]
+    dumped = settings.model_dump(mode="json")["choice_questions"][0]["options"]
+    assert dumped[0]["role_id"] == "900000000000000041" and dumped[2]["role_id"] is None
+
+
+def test_an_empty_role_picker_means_no_role():
+    question = ChoiceQuestion.model_validate({"label": "Q", "options": [{"label": "A", "role_id": ""}, {"label": "B"}]})
+    assert question.options[0].role_id is None
+
+
+def test_a_dropdown_question_needs_at_least_two_options():
+    with pytest.raises(ValidationError):
+        ChoiceQuestion(label="Troop type", options=[ChoiceOption(label="Infantry")])
+
+
+def test_options_of_one_question_need_different_labels():
+    with pytest.raises(ValidationError, match="different label"):
+        ChoiceQuestion(label="Troop type", options=[ChoiceOption(label="Infantry"), ChoiceOption(label="infantry")])
+
+
+def test_at_most_four_dropdown_questions():
+    # A Discord message has 5 rows, and one of them holds the Continue button.
+    question = ChoiceQuestion(label="Q", options=[ChoiceOption(label="A"), ChoiceOption(label="B")])
+    TicketSettings(choice_questions=[question] * 4)
+    with pytest.raises(ValidationError):
+        TicketSettings(choice_questions=[question] * 5)
+
+
+def test_the_pending_role_cannot_be_given_by_a_dropdown_option():
+    with pytest.raises(ValidationError, match="pending role"):
+        TicketSettings.model_validate({"pending_role_id": "900000000000000041", "choice_questions": [TROOPS]})
+
+
+def test_assignable_roles_lists_every_role_joltbot_gives():
+    settings = TicketSettings.model_validate(
+        {
+            "staff_role_ids": [1],  # staff and ping roles are never given by JoltBot
+            "ping_role_ids": [2],
+            "accept_role_ids": [10],
+            "pending_role_id": 11,
+            "extra_role_choices": [{"label": "Team A", "role_id": 12}],
+            "choice_questions": [TROOPS],
+        }
+    )
+    assert [(r.group, r.description, r.role_id) for r in settings.assignable_roles()] == [
+        ("Roles given on accept", "Role given on accept", 10),
+        ("Pending role", "Pending role", 11),
+        ("Extra role choices", "Extra role 'Team A'", 12),
+        ("Dropdown questions", "Dropdown role 'Troop type: Infantry'", 900000000000000041),
+        ("Dropdown questions", "Dropdown role 'Troop type: Cavalry'", 900000000000000042),
+    ]
+    assert settings.choice_role_ids == {900000000000000041, 900000000000000042}
