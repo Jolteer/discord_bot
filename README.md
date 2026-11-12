@@ -567,7 +567,7 @@ If you are going back because an update failed, the backup is from before that u
 | "My highest role … is not above …" | Drag JoltBot's role higher (section 6, step 2). |
 | Panel says applications aren't set up | The module is off or setup isn't finished. Check the dashboard. |
 | No message in the notices channel | JoltBot needs View Channel and Send Messages there; the dashboard overview says so if it can't post. Each problem is posted once and not repeated until it has been fixed or dismissed. |
-| Closed ticket channel not deleted | JoltBot couldn't post to the log channel. The dashboard overview shows why. Fix it, then delete the channel by hand (its transcript is still in it). |
+| Closed ticket channel not deleted | JoltBot couldn't post to the log channel. The dashboard overview shows why. Fix it; within 5 minutes JoltBot posts the transcript and deletes the channel itself. |
 | Transcript messages are blank | The Message Content intent is off. |
 | `/tickets` commands don't appear | Wait a minute after the first start. Re-invite with the `applications.commands` scope. Members without Manage Server don't see them by default. |
 

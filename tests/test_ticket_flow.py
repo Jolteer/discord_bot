@@ -517,3 +517,59 @@ async def test_submitting_the_form_opens_the_ticket_and_tells_the_applicant(worl
     submit.followup.send.assert_awaited_once_with(
         f"✅ Your application ticket is open: <#{ticket.channel_id}>", ephemeral=True
     )
+
+
+# ------------------------------------------------------------------ a log post that failed is tried again
+
+
+async def _close_with_a_broken_log_channel(world):
+    """Close a ticket while JoltBot may not post in the log channel; returns (ticket, ticket channel)."""
+    ticket, channel = await _open(world)
+    world.log.send.side_effect = http_error(discord.Forbidden, 403)
+    await world.manager.close(world.staff, ticket)
+    ticket = await _reload(world, ticket)
+    assert ticket.status == "closed" and ticket.logged is False
+    world.log.send.reset_mock(side_effect=True)
+    return ticket, channel
+
+
+async def test_a_failed_log_post_is_retried_once_the_log_channel_works(world):
+    ticket, channel = await _close_with_a_broken_log_channel(world)  # ...and then an admin fixes it
+
+    await world.manager.recover(world.guild)
+    ticket = await _reload(world, ticket)
+
+    assert ticket.logged is True and ticket.channel_gone is True
+    decision = world.log.send.await_args_list[0].kwargs
+    assert decision["embed"].title == f"Ticket #{ticket.id} - 🔒 Closed without decision"
+    assert decision["files"][0].filename == f"ticket-{ticket.id}-Alice-Smith.txt"
+    channel.delete.assert_awaited_once()
+
+
+async def test_a_log_channel_that_is_still_broken_is_left_alone(world):
+    ticket, channel = await _close_with_a_broken_log_channel(world)
+    world.log.permissions_for.return_value = discord.Permissions(view_channel=True)  # still may not send
+    issues_before = list(world.bot.issues)
+    channel.send.reset_mock()
+
+    await world.manager.recover(world.guild)
+    ticket = await _reload(world, ticket)
+
+    assert ticket.logged is False and ticket.channel_gone is False
+    world.log.send.assert_not_awaited()
+    channel.send.assert_not_awaited()  # no second "I did not delete this channel" message
+    channel.delete.assert_not_awaited()
+    assert world.bot.issues == issues_before  # the dashboard warning is already open
+
+
+async def test_an_unlogged_ticket_whose_channel_is_gone_is_not_posted_late(world):
+    # Tickets copied from the old bot can be "closed, not logged" with a channel that was
+    # deleted long ago. They must not all turn up in the log channel after an update.
+    ticket, channel = await _close_with_a_broken_log_channel(world)
+    world.guild.remove_channel(channel.id)
+
+    await world.manager.recover(world.guild)
+    ticket = await _reload(world, ticket)
+
+    assert ticket.channel_gone is True and ticket.logged is False
+    world.log.send.assert_not_awaited()

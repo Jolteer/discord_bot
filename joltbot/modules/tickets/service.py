@@ -37,6 +37,8 @@ log = logging.getLogger(__name__)
 
 MAX_REUPLOADS = 25  # cap on attachments re-uploaded to the log channel per ticket
 STUCK_AFTER_SECONDS = 120  # a claimed ticket with nothing working on it for this long is resumed
+# What JoltBot needs in the log channel to post a decision with its transcript.
+LOG_CHANNEL_PERMISSIONS = ("view_channel", "send_messages", "embed_links", "attach_files")
 DISCORD_TROUBLE = "Discord didn't respond properly. Nothing was changed; please try again in a moment."
 
 
@@ -510,8 +512,8 @@ class TicketManager:
             try:
                 await channel.send(
                     "⚠️ I couldn't post the transcript to the log channel, so I did **not** delete this channel "
-                    "(nothing is lost). Fix JoltBot's permissions in the log channel, then delete this channel "
-                    "manually. The dashboard shows what's wrong."
+                    "(nothing is lost). Once the log channel is fixed, I'll post the transcript and delete this "
+                    "channel within a few minutes. The dashboard shows what's wrong."
                 )
             except discord.HTTPException:
                 pass
@@ -576,6 +578,57 @@ class TicketManager:
         if ctx.settings.reupload_attachments and attachments:
             await self._reupload(log_channel, ticket, attachments)
         return True
+
+    async def retry_log(self, guild: discord.Guild, ticket_id: int) -> None:
+        """Try again to log a closed ticket whose log post failed, then delete its channel.
+
+        Such a ticket keeps its channel so nothing is lost. Once the log channel
+        works again, this posts the decision and transcript and removes the
+        channel, so admins don't have to clean up by hand. Safe to call more
+        than once; a failure is tried again on the next recovery round.
+
+        Args:
+            guild: Guild the ticket belongs to.
+            ticket_id: A ticket that is ``closed`` with ``logged`` False.
+        """
+        if ticket_id in self._busy:
+            return
+        self._busy.add(ticket_id)
+        try:
+            await self._retry_log(guild, ticket_id)
+        except Exception:
+            log.exception("Logging ticket #%s again failed; it will be retried automatically", ticket_id)
+        finally:
+            self._busy.discard(ticket_id)
+
+    async def _retry_log(self, guild: discord.Guild, ticket_id: int) -> None:
+        ticket = await store.get(self.db, ticket_id)
+        if ticket is None or ticket.status != "closed" or ticket.logged or ticket.channel_gone:
+            return
+        channel = guild.get_channel(ticket.channel_id) if ticket.channel_id else None
+        if not isinstance(channel, discord.TextChannel):
+            # The channel was deleted, so there is no transcript left to save. Post nothing:
+            # a decision turning up in the log long after the fact would only confuse.
+            await store.mark_channel_gone(self.db, ticket_id)
+            return
+        ctx = await load_context(self.bot, guild.id)
+        log_channel = guild.get_channel(ctx.settings.log_channel_id or 0)
+        if not isinstance(log_channel, discord.TextChannel):
+            return  # still not fixed; the dashboard warning from the first try is still open
+        perms = log_channel.permissions_for(guild.me)
+        if not all(getattr(perms, name) for name in LOG_CHANNEL_PERMISSIONS):
+            return
+        try:
+            text, attachments = await build_transcript(channel, ticket)
+        except discord.HTTPException as e:
+            log.warning("Guild %s: couldn't read %s for the transcript: %s", guild.id, channel, e)
+            return
+        if not await self._post_log(guild, ctx, ticket, text, attachments, resumed=True):
+            return
+        await store.mark_logged(self.db, ticket_id)
+        log.info("Guild %s: logged ticket #%s on a later try", guild.id, ticket_id)
+        await asyncio.sleep(ctx.settings.delete_delay_seconds)
+        await self._delete_channel(channel, ticket)
 
     async def _reupload(
         self, log_channel: discord.TextChannel, ticket: Ticket, attachments: list[discord.Attachment]
@@ -652,6 +705,9 @@ class TicketManager:
             # claimed_at is None for tickets copied from the old bot; treat those as stuck too.
             if t.id not in self._busy and (t.claimed_at is None or store.older_than(t.claimed_at, STUCK_AFTER_SECONDS)):
                 self._spawn(self.finalize(t.id, resumed=True))
+        for t in await store.list_closed_unlogged(self.db, guild.id):
+            if t.id not in self._busy:
+                self._spawn(self.retry_log(guild, t.id))
         for t in await store.list_closed_needing_delete(self.db, guild.id):
             if t.id in self._busy:
                 continue

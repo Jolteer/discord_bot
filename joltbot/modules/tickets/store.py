@@ -166,6 +166,31 @@ async def list_closed_needing_delete(db: Database, guild_id: int) -> list[Ticket
         return list(result.scalars())
 
 
+async def list_closed_unlogged(db: Database, guild_id: int) -> list[Ticket]:
+    """Closed tickets whose log post failed and whose channel was kept because of it.
+
+    Args:
+        db: Shared database.
+        guild_id: Discord guild snowflake.
+
+    Returns:
+        Tickets with ``logged`` False and ``channel_gone`` False, ordered by id.
+    """
+    async with db.session() as session:
+        result = await session.execute(
+            select(Ticket)
+            .where(
+                Ticket.guild_id == guild_id,
+                Ticket.status == "closed",
+                Ticket.logged.is_(False),
+                Ticket.channel_gone.is_(False),
+                Ticket.channel_id.is_not(None),
+            )
+            .order_by(Ticket.id)
+        )
+        return list(result.scalars())
+
+
 async def claim(
     db: Database,
     ticket_id: int,
@@ -280,6 +305,19 @@ async def mark_closed(db: Database, ticket_id: int, *, logged: bool) -> None:
             ticket.status = "closed"
             ticket.closed_at = ticket.closed_at or utcnow()
             ticket.logged = logged
+
+
+async def mark_logged(db: Database, ticket_id: int) -> None:
+    """Record that a closed ticket's log post got through on a later try.
+
+    Args:
+        db: Shared database.
+        ticket_id: Ticket primary key.
+    """
+    async with db.session() as session, session.begin():
+        await session.execute(
+            update(Ticket).where(Ticket.id == ticket_id, Ticket.status == "closed").values(logged=True)
+        )
 
 
 async def mark_channel_gone(db: Database, ticket_id: int) -> None:
