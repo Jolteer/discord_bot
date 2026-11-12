@@ -39,10 +39,12 @@ class Tree(app_commands.CommandTree):
             interaction: The failed slash interaction.
             error: Raised by discord.py's app command layer.
         """
-        if isinstance(error, app_commands.CheckFailure):
+        # BotMissingPermissions is itself a CheckFailure, so it has to be tested first.
+        if isinstance(error, app_commands.BotMissingPermissions):
+            names = ", ".join(p.replace("_", " ").title() for p in error.missing_permissions)
+            message = f"I'm missing permissions: {names}."
+        elif isinstance(error, app_commands.CheckFailure):
             message = str(error) or "You can't use this command."
-        elif isinstance(error, app_commands.BotMissingPermissions):
-            message = f"I'm missing permissions: {', '.join(error.missing_permissions)}."
         else:
             log.exception("Slash command failed", exc_info=error)
             message = "Something went wrong running that command. Please try again in a moment."
@@ -114,9 +116,11 @@ class JoltBot(commands.Bot):
     async def sync_commands(self) -> None:
         """Register global slash commands only when the payload hash changed.
 
-        Also clears legacy per-guild commands when ``bot_meta.clear_guild_commands``
-        is set (KOC migration). Discord rate-limits blank syncs, so unchanged
-        trees are skipped via ``commands_hash``.
+        Discord rate-limits blank syncs, so unchanged trees are skipped via
+        ``commands_hash``. Afterwards, clears legacy per-guild commands when
+        ``bot_meta.clear_guild_commands`` is set (KOC migration). The global
+        registration comes first so a problem with one old server can never
+        stop every server from getting its commands.
 
         Raises:
             discord.HTTPException: Propagated from ``tree.sync`` (caller retries).
@@ -125,25 +129,59 @@ class JoltBot(commands.Bot):
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         async with self.db.session() as session:
             stored = await session.get(BotMeta, COMMANDS_HASH_KEY)
-            clear = await session.get(BotMeta, CLEAR_GUILD_COMMANDS_KEY)
-
-        if clear is not None:
-            for raw_id in filter(None, clear.value.split(",")):
-                guild = discord.Object(id=int(raw_id))
-                self.tree.clear_commands(guild=guild)
-                await self.tree.sync(guild=guild)  # an empty list removes the old per-guild commands
-                log.info("Removed old per-server slash commands from guild %s", raw_id)
-            async with self.db.session() as session, session.begin():
-                if (row := await session.get(BotMeta, CLEAR_GUILD_COMMANDS_KEY)) is not None:
-                    await session.delete(row)
 
         if stored is not None and stored.value == digest:
             log.info("Slash commands unchanged; not re-registering")
+        else:
+            synced = await self.tree.sync()
+            async with self.db.session() as session, session.begin():
+                await session.merge(BotMeta(key=COMMANDS_HASH_KEY, value=digest))
+            log.info("Registered %d global slash command(s)", len(synced))
+
+        await self._clear_legacy_guild_commands()
+
+    async def _clear_legacy_guild_commands(self) -> None:
+        """Remove the per-guild commands the old bot registered, for each listed guild.
+
+        A guild Discord refuses (the bot is no longer in it, or was added without
+        the ``applications.commands`` scope) is dropped from the list: retrying
+        can't fix that. A guild that hit a temporary error stays on the list.
+
+        Raises:
+            discord.HTTPException: A temporary error left guilds to clear (caller retries).
+        """
+        async with self.db.session() as session:
+            row = await session.get(BotMeta, CLEAR_GUILD_COMMANDS_KEY)
+        if row is None:
             return
-        synced = await self.tree.sync()
+
+        remaining: list[str] = []
+        failure: discord.HTTPException | None = None
+        for raw_id in filter(None, (part.strip() for part in row.value.split(","))):
+            if not raw_id.isdigit():
+                log.warning("Ignoring invalid guild ID %r in %s", raw_id, CLEAR_GUILD_COMMANDS_KEY)
+                continue
+            guild = discord.Object(id=int(raw_id))
+            try:
+                self.tree.clear_commands(guild=guild)
+                await self.tree.sync(guild=guild)  # an empty list removes the old per-guild commands
+                log.info("Removed old per-server slash commands from guild %s", raw_id)
+            except (discord.Forbidden, discord.NotFound) as e:
+                log.warning(
+                    "Can't remove old slash commands from guild %s (not in it any more?); skipping: %s", raw_id, e
+                )
+            except discord.HTTPException as e:
+                remaining.append(raw_id)
+                failure = e
+
         async with self.db.session() as session, session.begin():
-            await session.merge(BotMeta(key=COMMANDS_HASH_KEY, value=digest))
-        log.info("Registered %d global slash command(s)", len(synced))
+            if (current := await session.get(BotMeta, CLEAR_GUILD_COMMANDS_KEY)) is not None:
+                if remaining:
+                    current.value = ",".join(remaining)
+                else:
+                    await session.delete(current)
+        if failure is not None:
+            raise failure
 
     # ------------------------------------------------------------------ issues
 
