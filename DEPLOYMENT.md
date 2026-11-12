@@ -5,9 +5,9 @@ How the live JoltBot server is set up and how to look after it. The [README](REA
 Every command says where to run it:
 
 - **PC** means PowerShell on your own computer.
-- **Server** means a shell on the server, after `ssh root@SERVER_IP`.
+- **Server** means a shell on the server, after `ssh root@2.31.91.83`.
 
-`SERVER_IP` is the server's IPv4 address (Hetzner Cloud Console → the server → Overview). `HOST` is the dashboard's hostname, which is the same address with dashes plus `.sslip.io`: for `203.0.113.7` it is `203-0-113-7.sslip.io`.
+The server's address is `2.31.91.83`. The dashboard is at `https://2-31-91-83.sslip.io`: the same address with dashes plus `.sslip.io`, a free name that needs no registration. If the server's IP address ever changes, both change with it (see "Change the domain").
 
 ## How it is set up
 
@@ -19,7 +19,7 @@ Every command says where to run it:
 | Processes | Docker Compose project `joltbot`: `bot`, `web` (dashboard) and `caddy` (HTTPS) |
 | Database | SQLite file in the Docker volume `joltbot_joltbot-data` |
 | Backups | `/root/joltbot-backups`, one file per night, kept for 7 days |
-| Dashboard | `https://HOST`, certificate obtained and renewed by Caddy |
+| Dashboard | `https://2-31-91-83.sslip.io`, certificate obtained and renewed by Caddy |
 
 - **Restarts.** Every container has `restart: unless-stopped` and Docker starts at boot, so JoltBot comes back after a crash or a reboot.
 - **Firewall.** Only TCP 22 (SSH), 80 and 443 are open, in two places: the Hetzner Cloud Firewall and `ufw` on the server. The Hetzner one is the one that counts, because Docker publishes container ports past `ufw`. The dashboard's own port 8000 listens on `127.0.0.1` only; the internet reaches it through Caddy.
@@ -31,7 +31,7 @@ Every command says where to run it:
 1. Push your changes to `main` on GitHub.
 2. **PC:**
    ```powershell
-   ssh root@SERVER_IP "cd /root/joltbot && ./deploy/update.sh"
+   ssh root@2.31.91.83 "cd /root/joltbot && ./deploy/update.sh"
    ```
 
 The script pulls the code, builds the new image while the old version keeps running, backs up the database, stops the bot and the dashboard, applies database migrations and starts everything again. Downtime is usually under a minute. If the build or the backup fails, it stops and JoltBot is left running as it was.
@@ -39,7 +39,7 @@ The script pulls the code, builds the new image while the old version keeps runn
 Check afterwards (**PC**):
 
 ```powershell
-ssh root@SERVER_IP "cd /root/joltbot && docker compose --profile proxy ps"
+ssh root@2.31.91.83 "cd /root/joltbot && docker compose --profile proxy ps"
 ```
 
 `web` shows `healthy` within seconds, `bot` about two minutes after it connects to Discord.
@@ -78,7 +78,7 @@ If you are going back because an update went wrong, the backup is from before th
 
 Members with Manage Server or Administrator, and the server owner, can always use the dashboard. For everyone else:
 
-- **Give access:** dashboard → the server → **Dashboard access** → tick a role (for example `Moderator`) → Save. Everyone holding that role can now log in at `https://HOST` and change JoltBot's settings for that server.
+- **Give access:** dashboard → the server → **Dashboard access** → tick a role (for example `Moderator`) → Save. Everyone holding that role can now log in at `https://2-31-91-83.sslip.io` and change JoltBot's settings for that server.
 - **Remove one person:** take the role away from them in Discord. Their access ends within a minute.
 - **Remove a whole role:** untick it on the Dashboard access page. Access ends at once.
 
@@ -86,7 +86,7 @@ Only Manage Server, Administrator or the owner can open the Dashboard access pag
 
 ## Change the domain
 
-1. Point the new domain's DNS A record at `SERVER_IP` and wait until `nslookup the.new.domain` shows it.
+1. Point the new domain's DNS A record at `2.31.91.83` and wait until `nslookup the.new.domain` shows it.
 2. **Server:** `nano /root/joltbot/.env` and change two lines:
    ```
    DOMAIN=the.new.domain
@@ -101,7 +101,7 @@ Everyone logs in again afterwards. Once the new address works, remove the old re
 
 - **Server:** `cd /root/joltbot && docker compose logs --tail 100 bot` (or `web`, `caddy`, `migrate`).
 - Errors from the bot and the dashboard are posted to the Discord webhook in `ALERT_WEBHOOK_URL`.
-- `https://HOST/health/bot` answers 200 while the bot is connected to Discord. A free uptime monitor pointed at it tells you when the bot or the whole server is down.
+- `https://2-31-91-83.sslip.io/health/bot` answers 200 while the bot is connected to Discord. A free uptime monitor pointed at it tells you when the bot or the whole server is down.
 
 ## Changing a secret
 
