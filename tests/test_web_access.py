@@ -17,10 +17,10 @@ from sqlalchemy import select, update
 
 from joltbot.core.config import AppConfig
 from joltbot.core.discord_rest import CATEGORY, TEXT_CHANNEL, Channel, DiscordError, Emoji, GuildData, Role
-from joltbot.core.guild_settings import load_module
+from joltbot.core.guild_settings import SYSTEM_ACTOR, load_module, save_module
 from joltbot.core.health import write_heartbeat
 from joltbot.core.issues import record_issue
-from joltbot.core.models import AuditLog, GuildIssue, WebSession
+from joltbot.core.models import AuditLog, Guild, GuildIssue, WebSession
 from joltbot.core.permissions import ADMINISTRATOR, ELEVATED_PERMISSIONS, MANAGE_GUILD
 from joltbot.core.types import utcnow
 from joltbot.modules.registry import MODULES, ModuleInfo
@@ -68,6 +68,10 @@ class FakeDiscord:
         self.logins = {}  # code -> (user, guilds)
         self.tokens = {}  # access token -> [user, guilds]
         self.data = {GUILD_A: guild_data(GUILD_A), GUILD_B: guild_data(GUILD_B)}
+        self.members = {}  # (guild ID, user ID) -> the role IDs that member holds
+
+    async def member_role_ids(self, guild_id, user_id):
+        return frozenset(self.members.get((guild_id, user_id), ()))
 
     def authorize_url(self, state):
         return f"https://discord.test/authorize?state={state}"
@@ -846,3 +850,214 @@ async def test_plain_text_is_not_an_icon(db, alice):
     fields = {**_troop_question(ROLE[GUILD_A]), "c_opt_emoji_0_0": "my icon"}
     r = await alice.post(f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, 1, extra=fields))
     assert r.status_code == 400 and "Dropdown question 1, option 1" in html.unescape(r.text)
+
+
+# --------------------------------------------------------------------------- dashboard access roles
+
+HELPERS = 5160  # a role in server A with no Discord permissions at all
+MAYA = {"id": "1005", "username": "maya"}  # member of A who holds Helpers
+ERIN = {"id": "1006", "username": "erin"}  # member of A with no roles
+MEMBER_ONLY = 1 << 10  # View Channels: an ordinary member's permissions
+
+
+@pytest.fixture
+def helpers_role(fake):
+    """Server A has a Helpers role, and Maya holds it."""
+    data = fake.data[GUILD_A]
+    fake.data[GUILD_A] = replace(data, roles=[*data.roles, Role(HELPERS, "Helpers", 4, 0, False, 0)])
+    fake.members[(GUILD_A, int(MAYA["id"]))] = {HELPERS}
+
+
+async def set_access_roles(db, role_ids, guild_id=GUILD_A):
+    """Store a server's dashboard access roles, as the Dashboard access page would."""
+    async with db.session() as session, session.begin():
+        state = await load_module(session, guild_id, "general")
+        await save_module(
+            session,
+            guild_id,
+            "general",
+            enabled=True,
+            config=state.config.model_copy(update={"dashboard_role_ids": list(role_ids)}),
+            expected_version=state.version,
+            actor=SYSTEM_ACTOR,
+        )
+
+
+async def general_state(db, guild_id=GUILD_A):
+    async with db.session() as session:
+        return await load_module(session, guild_id, "general")
+
+
+@pytest.fixture
+async def maya(app, fake, db, helpers_role):
+    """Logged in, with Helpers already given dashboard access to server A."""
+    await set_access_roles(db, [HELPERS])
+    async with client_for(app) as client:
+        yield await login(client, fake, MAYA, [guild_entry(GUILD_A, MEMBER_ONLY), guild_entry(GUILD_B, MEMBER_ONLY)])
+
+
+@pytest.mark.parametrize("path", ["", "/tickets", "/general", "/audit"])
+async def test_a_member_with_an_access_role_can_open_the_dashboard(maya, path):
+    assert (await maya.get(f"/servers/{GUILD_A}{path}")).status_code == 200
+    assert (await maya.get(f"/servers/{GUILD_B}{path}")).status_code == 403  # in B too, but B gave nobody access
+
+
+async def test_the_server_list_shows_servers_reached_through_a_role(maya):
+    page = (await maya.get("/servers")).text
+    assert f'href="/servers/{GUILD_A}"' in page
+    assert f"/servers/{GUILD_B}" not in page and "Invite JoltBot" not in page
+
+
+async def test_a_role_holder_can_save_settings_and_the_audit_log_names_them(db, maya):
+    csrf = await csrf_of(maya)
+    version = (await tickets_state(db, GUILD_A)).version
+    r = await maya.post(f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, version))
+    assert r.status_code == 303 and (await tickets_state(db, GUILD_A)).enabled is True
+    async with db.session() as session:
+        entry = (await session.execute(select(AuditLog).where(AuditLog.module == "tickets"))).scalar_one()
+    assert (entry.actor_id, entry.actor_name, entry.source) == (int(MAYA["id"]), "maya", "dashboard")
+
+
+async def test_a_member_without_the_role_is_refused(app, fake, db, helpers_role):
+    await set_access_roles(db, [HELPERS])
+    async with client_for(app) as client:
+        await login(client, fake, ERIN, [guild_entry(GUILD_A, MEMBER_ONLY)])
+        for path in ("", "/tickets", "/general", "/audit", "/access"):
+            assert (await client.get(f"/servers/{GUILD_A}{path}")).status_code == 403, path
+        assert f"/servers/{GUILD_A}" not in (await client.get("/servers")).text
+
+
+async def test_losing_the_role_in_discord_removes_access(maya, fake):
+    assert (await maya.get(f"/servers/{GUILD_A}")).status_code == 200
+    fake.members[(GUILD_A, int(MAYA["id"]))] = set()  # the role was taken away in Discord
+    assert (await maya.get(f"/servers/{GUILD_A}")).status_code == 403
+    assert f"/servers/{GUILD_A}" not in (await maya.get("/servers")).text
+
+
+async def test_removing_the_role_from_the_list_removes_access_at_once(db, maya):
+    assert (await maya.get(f"/servers/{GUILD_A}/tickets")).status_code == 200
+    await set_access_roles(db, [])
+    assert (await maya.get(f"/servers/{GUILD_A}/tickets")).status_code == 403
+
+
+async def test_a_role_holder_cannot_see_or_change_who_has_access(db, maya):
+    assert f"/servers/{GUILD_A}/access" not in (await maya.get(f"/servers/{GUILD_A}")).text  # no link to it
+    assert (await maya.get(f"/servers/{GUILD_A}/access")).status_code == 403
+    before = await general_state(db)
+    csrf = await csrf_of(maya)
+    r = await maya.post(
+        f"/servers/{GUILD_A}/access",
+        data={"csrf_token": csrf, "version": str(before.version), "dashboard_role_ids": str(ROLE[GUILD_A])},
+    )
+    assert r.status_code == 403 and "Only members with Manage Server" in html.unescape(r.text)
+    after = await general_state(db)
+    assert (after.version, after.config.dashboard_role_ids) == (before.version, [HELPERS])
+
+
+async def test_a_manager_picks_the_access_roles_and_it_is_audited(db, alice, helpers_role):
+    page = await alice.get(f"/servers/{GUILD_A}/access")
+    assert page.status_code == 200 and f'name="dashboard_role_ids" value="{HELPERS}"' in page.text
+    assert f'href="/servers/{GUILD_A}/access"' in page.text
+
+    csrf = await csrf_of(alice)
+    form = {"csrf_token": csrf, "version": "1", "dashboard_role_ids": str(HELPERS)}
+    assert (await alice.post(f"/servers/{GUILD_A}/access", data=form)).status_code == 303
+    assert (await general_state(db)).config.dashboard_role_ids == [HELPERS]
+
+    async with db.session() as session:
+        entry = (await session.execute(select(AuditLog).where(AuditLog.guild_id == GUILD_A))).scalar_one()
+    assert (entry.actor_id, entry.source, entry.module) == (int(ALICE["id"]), "dashboard", "general")
+    assert entry.changes == {"dashboard_role_ids": [[], [str(HELPERS)]]}
+    audit = html.unescape((await alice.get(f"/servers/{GUILD_A}/audit")).text)
+    assert "dashboard_role_ids" in audit and "@Helpers" in audit and "alice" in audit
+
+    # Unticking everything is audited too, and closes the door again.
+    form = {"csrf_token": csrf, "version": "2"}
+    assert (await alice.post(f"/servers/{GUILD_A}/access", data=form)).status_code == 303
+    assert (await general_state(db)).config.dashboard_role_ids == []
+    async with db.session() as session:
+        assert len(list((await session.execute(select(AuditLog))).scalars())) == 2
+
+
+@pytest.mark.parametrize("bad", [str(ROLE[GUILD_B]), "999999", "not-a-number"])
+async def test_an_access_role_from_another_server_is_refused(db, alice, bad):
+    csrf = await csrf_of(alice)
+    r = await alice.post(
+        f"/servers/{GUILD_A}/access", data={"csrf_token": csrf, "version": "1", "dashboard_role_ids": bad}
+    )
+    assert r.status_code == 400
+    assert (await general_state(db)).config.dashboard_role_ids == []
+
+
+async def test_an_old_access_form_does_not_overwrite_a_newer_save(db, alice, helpers_role):
+    csrf = await csrf_of(alice)
+    form = {"csrf_token": csrf, "version": "1", "dashboard_role_ids": str(HELPERS)}
+    assert (await alice.post(f"/servers/{GUILD_A}/access", data=form)).status_code == 303
+    r = await alice.post(f"/servers/{GUILD_A}/access", data={"csrf_token": csrf, "version": "1"})  # an old tab
+    assert r.status_code == 400 and "Someone else saved" in r.text
+    assert (await general_state(db)).config.dashboard_role_ids == [HELPERS]
+
+
+async def test_saving_the_general_page_never_changes_the_access_roles(db, maya):
+    csrf = await csrf_of(maya)
+    form = _general_form(csrf, embed_color="#abcdef", version_general="2", dashboard_role_ids=str(ROLE[GUILD_A]))
+    assert (await maya.post(f"/servers/{GUILD_A}/general", data=form)).status_code == 303
+    config = (await general_state(db)).config
+    assert (config.embed_color, config.dashboard_role_ids) == ("#abcdef", [HELPERS])
+
+
+async def test_only_an_administrator_can_make_the_bot_give_out_an_access_role(db, maya, alice, dave):
+    """Otherwise a role holder could have JoltBot hand dashboard access to every new member."""
+    for client in (maya, alice):  # let in by the role; Manage Server alone
+        csrf = await csrf_of(client)
+        form = ticket_form(GUILD_A, csrf, 1, accept_role_ids=str(HELPERS))
+        r = await client.post(f"/servers/{GUILD_A}/tickets", data=form)
+        page = html.unescape(r.text)
+        assert r.status_code == 400 and "Helpers gives access to this dashboard" in page
+        assert "Only the server owner or an Administrator" in page
+    assert (await tickets_state(db, GUILD_A)).version == 1  # nothing saved
+
+    csrf = await csrf_of(dave)
+    form = ticket_form(GUILD_A, csrf, 1, accept_role_ids=str(HELPERS))
+    assert (await dave.post(f"/servers/{GUILD_A}/tickets", data=form)).status_code == 303
+
+
+async def test_a_role_the_bot_gives_out_cannot_be_made_an_access_role(db, alice):
+    csrf = await csrf_of(alice)
+    assert (await alice.post(f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, 1))).status_code == 303
+    r = await alice.post(
+        f"/servers/{GUILD_A}/access",
+        data={"csrf_token": csrf, "version": "1", "dashboard_role_ids": str(ROLE[GUILD_A])},
+    )
+    page = html.unescape(r.text)
+    assert r.status_code == 400 and "JoltBot gives out Member" in page and "Role given on accept" in page
+    assert (await general_state(db)).config.dashboard_role_ids == []
+
+
+async def test_a_role_holder_learns_nothing_about_servers_they_cannot_use(db, maya):
+    assert (await maya.get(f"/servers/{GUILD_B}")).status_code == 403  # JoltBot is there
+    assert (await maya.get("/servers/555555555555555555")).status_code == 403  # not a member at all
+    async with db.session() as session, session.begin():  # JoltBot leaves server A
+        await session.execute(update(Guild).where(Guild.id == GUILD_A).values(active=False))
+    assert (await maya.get(f"/servers/{GUILD_A}")).status_code == 403  # the same answer, not "isn't in that server"
+
+
+async def test_roles_are_never_guessed_while_discord_is_down(maya, fake):
+    async def down(guild_id, user_id):
+        raise DiscordError("Discord is down", 503)
+
+    fake.member_role_ids = down
+    r = await maya.get(f"/servers/{GUILD_A}")
+    assert r.status_code == 503 and "roles couldn't be checked" in html.unescape(r.text)
+    page = await maya.get("/servers")  # the list still loads, without the server that couldn't be checked
+    assert page.status_code == 200 and f"/servers/{GUILD_A}" not in page.text
+
+
+async def test_managers_are_not_asked_for_their_roles(alice, fake):
+    """Manage Server is enough on its own, also while member lookups fail."""
+
+    async def down(guild_id, user_id):
+        raise DiscordError("Discord is down", 503)
+
+    fake.member_role_ids = down
+    assert (await alice.get(f"/servers/{GUILD_A}/tickets")).status_code == 200

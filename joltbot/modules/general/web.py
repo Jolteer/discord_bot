@@ -188,6 +188,9 @@ async def save(request: Request, access: RequireGuild):
                     errors.append(f"{MODULES[name].title} isn't set up yet: " + " ".join(problems))
             if errors:
                 return await fail(errors)
+            # This form has no field for who may use the dashboard. Keep what is stored,
+            # so saving General can never change it (people let in by a role can save here).
+            general = general.model_copy(update={"dashboard_role_ids": states["general"].config.dashboard_role_ids})
             await save_module(
                 session,
                 access.guild_id,

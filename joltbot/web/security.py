@@ -2,8 +2,14 @@
 
 The golden rule: the browser is never trusted. Every page or form that
 touches a server goes through ``guild_access``, which re-checks on the server
-that the logged-in user can manage THAT server. The server ID only ever comes
-from the URL path and is checked; IDs inside form fields are ignored.
+that the logged-in user may use the dashboard for THAT server. The server ID
+only ever comes from the URL path and is checked; IDs inside form fields are
+ignored.
+
+Two ways in, both checked with Discord on every request (with short caches):
+- Manage Server, Administrator or owning the server ("manager").
+- Holding one of the server's dashboard access roles. These people can change
+  settings but not who has access (``manager_access``).
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from fastapi import Depends, HTTPException, Request
 from ..core.config import AppConfig
 from ..core.db import Database
 from ..core.discord_rest import DiscordClient, DiscordError, DiscordUnauthorized
-from ..core.guild_settings import Actor
+from ..core.guild_settings import Actor, load_module
 from ..core.models import Guild, WebSession
 from ..core.permissions import can_manage_guild, is_administrator
 from .sessions import delete_session, load_session, user_guilds
@@ -38,7 +44,7 @@ class UserGuild:
     name: str
     icon: str | None
     owner: bool
-    can_manage: bool  # may use the dashboard for this server
+    can_manage: bool  # owner, Administrator or Manage Server: a "manager" of this server
     is_admin: bool  # owner or Administrator: may also make JoltBot give out powerful roles
 
     @property
@@ -146,11 +152,13 @@ async def current_user_guilds(request: Request, ws: WebSession) -> list[UserGuil
 
 @dataclass(frozen=True)
 class GuildAccess:
-    """Proof that the current user may manage this guild. Only guild_access() creates it."""
+    """Proof that the current user may use this guild's dashboard. Only guild_access() creates it."""
 
     session: WebSession
     guild: Guild
     user_guild: UserGuild
+    # True: Manage Server / Administrator / owner. False: let in by a dashboard access role.
+    is_manager: bool
 
     @property
     def guild_id(self) -> int:
@@ -161,14 +169,50 @@ class GuildAccess:
         return Actor(user_id=self.session.user_id, name=self.session.username, source="dashboard")
 
 
+ACCESS_DENIED = (
+    "You need Manage Server permission in that server, or a role its admins gave dashboard access, "
+    "to manage JoltBot there."
+)
+
+
+async def role_access(request: Request, ws: WebSession, guild_id: int) -> Guild | None:
+    """The guild, if this user holds one of its dashboard access roles right now.
+
+    Args:
+        request: Incoming HTTP request.
+        ws: Logged-in session.
+        guild_id: A server the user is a member of.
+
+    Returns:
+        The ``Guild`` row, or ``None`` if JoltBot isn't there, the server has no
+        access roles, or the user holds none of them.
+
+    Raises:
+        DiscordError: The user's roles couldn't be fetched (never guessed).
+    """
+    async with get_db(request).session() as session:
+        guild = await session.get(Guild, guild_id)
+        if guild is None or not guild.active:
+            return None
+        allowed = set((await load_module(session, guild_id, "general")).config.dashboard_role_ids)
+    if not allowed:
+        return None
+    # Asked with the bot token, after the database session is closed.
+    held = await get_discord(request).member_role_ids(guild_id, ws.user_id)
+    return guild if held & allowed else None
+
+
 async def guild_access(request: Request, guild_id: int) -> GuildAccess:
     """FastAPI dependency for every ``/servers/{guild_id}/...`` route.
 
     1. Must be logged in.
-    2. Discord must say they're the owner, an Administrator or have Manage Server there.
-       (Checked BEFORE looking at our database, so non-admins can't even find out
-       whether JoltBot is in a server.)
-    3. JoltBot must be in that server (``guilds.active``).
+    2. Must be a member of that server, according to Discord. Anyone else gets
+       the same 403 without our database being read, so outsiders can't find
+       out whether JoltBot is in a server.
+    3. Owner, Administrator or Manage Server: allowed, as a manager, if JoltBot
+       is in that server (``guilds.active``).
+    4. Otherwise they must hold one of the server's dashboard access roles
+       right now (``role_access``).
 
     Args:
         request: Incoming HTTP request.
@@ -179,21 +223,53 @@ async def guild_access(request: Request, guild_id: int) -> GuildAccess:
 
     Raises:
         LoginRequired: Anonymous visitor.
-        HTTPException: 403 if not a manager; 404 if the bot is not in the guild.
+        HTTPException: 403 if not allowed; 404 if a manager's server has no bot;
+            503 if a member's roles can't be checked with Discord.
     """
     ws = await require_session(request)
     match = next((g for g in await current_user_guilds(request, ws) if g.id == guild_id), None)
-    if match is None or not match.can_manage:
-        raise HTTPException(403, "You need Manage Server permission in that server to manage JoltBot there.")
-    async with get_db(request).session() as session:
-        guild = await session.get(Guild, guild_id)
-    if guild is None or not guild.active:
-        raise HTTPException(404, "JoltBot isn't in that server. Invite it first from the server list.")
-    return GuildAccess(session=ws, guild=guild, user_guild=match)
+    if match is None:
+        raise HTTPException(403, ACCESS_DENIED)
+    if match.can_manage:
+        async with get_db(request).session() as session:
+            guild = await session.get(Guild, guild_id)
+        if guild is None or not guild.active:
+            raise HTTPException(404, "JoltBot isn't in that server. Invite it first from the server list.")
+        return GuildAccess(session=ws, guild=guild, user_guild=match, is_manager=True)
+    try:
+        guild = await role_access(request, ws, guild_id)
+    except DiscordError:
+        # Fail closed: without Discord we can't know they still hold the role.
+        raise HTTPException(
+            503, "Discord isn't responding right now, so your roles couldn't be checked. Try again in a minute."
+        ) from None
+    if guild is None:
+        raise HTTPException(403, ACCESS_DENIED)
+    return GuildAccess(session=ws, guild=guild, user_guild=match, is_manager=False)
 
 
 RequireGuild = Annotated[GuildAccess, Depends(guild_access)]
 RequireSession = Annotated[WebSession, Depends(require_session)]
+
+
+async def manager_access(access: RequireGuild) -> GuildAccess:
+    """Dependency for pages only a manager may use: deciding who has dashboard access.
+
+    Args:
+        access: The result of ``guild_access`` for this request.
+
+    Returns:
+        The same ``GuildAccess``, now known to be a manager's.
+
+    Raises:
+        HTTPException: 403 for someone let in by a dashboard access role.
+    """
+    if not access.is_manager:
+        raise HTTPException(403, "Only members with Manage Server can change who has dashboard access.")
+    return access
+
+
+RequireManager = Annotated[GuildAccess, Depends(manager_access)]
 
 
 # --------------------------------------------------------------------------- CSRF

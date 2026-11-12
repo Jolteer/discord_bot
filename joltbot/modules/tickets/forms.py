@@ -7,7 +7,7 @@ reuse them unchanged.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from pydantic import ValidationError
@@ -245,13 +245,22 @@ def _granted_roles(settings: TicketSettings) -> list[tuple[str, list[int]]]:
 
 
 def powerful_role_errors(
-    settings: TicketSettings, previous: TicketSettings, data: GuildData, *, actor_is_admin: bool
+    settings: TicketSettings,
+    previous: TicketSettings,
+    data: GuildData,
+    *,
+    actor_is_admin: bool,
+    dashboard_role_ids: Collection[int] = (),
 ) -> list[str]:
     """Stop Manage Server alone from making JoltBot hand out a powerful role.
 
     In Discord, Manage Server doesn't let you assign roles. Without this check
     a dashboard user could set, say, a moderator role as the role given on
     accept and then obtain it through an application.
+
+    A role that lets its holders use this dashboard (``dashboard_role_ids``)
+    counts as powerful too, whatever its Discord permissions. Otherwise someone
+    let in by such a role could have JoltBot hand the same access to anyone.
 
     Only *newly added* roles are checked, per field. A powerful role an admin
     already saved stays, so other managers can keep editing the page, but they
@@ -262,6 +271,7 @@ def powerful_role_errors(
         previous: Settings currently saved for this guild.
         data: Live roles for the guild (permission bits come from here).
         actor_is_admin: True if the saving user is the owner or an Administrator.
+        dashboard_role_ids: This server's dashboard access roles (General settings).
 
     Returns:
         Error lines; empty if the save is allowed.
@@ -279,6 +289,11 @@ def powerful_role_errors(
             if names := elevated_permission_names(roles[role_id].permissions):
                 errors.append(
                     f"{label}: {roles[role_id].name} has powerful permissions ({', '.join(names)}). Only the "
+                    "server owner or an Administrator can make JoltBot give out a role like that."
+                )
+            elif role_id in dashboard_role_ids:
+                errors.append(
+                    f"{label}: {roles[role_id].name} gives access to this dashboard. Only the "
                     "server owner or an Administrator can make JoltBot give out a role like that."
                 )
     return errors

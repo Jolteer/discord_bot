@@ -154,7 +154,14 @@ async def save(request: Request, access: RequireGuild):
         return await fail(errors)
     async with get_db(request).session() as session:
         previous = (await load_module(session, access.guild_id, "tickets")).config
-    if errors := powerful_role_errors(settings, previous, data, actor_is_admin=access.user_guild.is_admin):
+        dashboard_role_ids = (await load_module(session, access.guild_id, "general")).config.dashboard_role_ids
+    if errors := powerful_role_errors(
+        settings,
+        previous,
+        data,
+        actor_is_admin=access.user_guild.is_admin,
+        dashboard_role_ids=dashboard_role_ids,
+    ):
         return await fail(errors)
     if enabled and (problems := settings.setup_problems()):
         return await fail(["Can't switch tickets on yet:"] + problems)

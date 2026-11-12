@@ -25,6 +25,10 @@ API = "https://discord.com/api/v10"
 AUTHORIZE_URL = "https://discord.com/oauth2/authorize"
 OAUTH_SCOPES = "identify guilds"
 GUILD_CACHE_SECONDS = 60
+# How long one member's roles are trusted. Someone who loses a dashboard access role
+# keeps dashboard access for at most this long.
+MEMBER_CACHE_SECONDS = 60
+MEMBER_CACHE_MAX = 1000  # entries; expired ones are dropped once the cache grows past this
 
 # Discord channel types we care about
 TEXT_CHANNEL, CATEGORY, ANNOUNCEMENT_CHANNEL = 0, 4, 5
@@ -127,6 +131,8 @@ class DiscordClient:
         self._cache: dict[int, GuildData] = {}
         self._locks: dict[int, asyncio.Lock] = {}
         self._bot_user_id: int | None = None
+        # (guild ID, user ID) -> (time fetched, that member's role IDs)
+        self._member_roles: dict[tuple[int, int], tuple[float, frozenset[int]]] = {}
 
     async def aclose(self) -> None:
         await self.http.aclose()
@@ -267,3 +273,38 @@ class DiscordClient:
 
     def forget_guild(self, guild_id: int) -> None:
         self._cache.pop(guild_id, None)
+
+    async def member_role_ids(self, guild_id: int, user_id: int) -> frozenset[int]:
+        """The roles one member holds in a server right now; cached for 60 seconds.
+
+        Asked with the bot token, so it needs no extra permission from the user
+        and can't be faked by them. Used to decide whether someone without
+        Manage Server may use a server's dashboard.
+
+        Args:
+            guild_id: Server to look in. JoltBot must be in it.
+            user_id: The Discord user.
+
+        Returns:
+            Their role IDs. Empty if they are not in that server (or JoltBot isn't).
+
+        Raises:
+            DiscordError: Discord couldn't be asked. The caller must not guess.
+        """
+        key = (guild_id, user_id)
+        now = time.time()
+        cached = self._member_roles.get(key)
+        if cached and now - cached[0] < MEMBER_CACHE_SECONDS:
+            return cached[1]
+        try:
+            member = await self._request("GET", f"/guilds/{guild_id}/members/{user_id}", auth=f"Bot {self.bot_token}")
+        except DiscordError as e:
+            if e.status not in (403, 404):  # 404: not a member. 403: JoltBot is not in that server.
+                raise
+            roles: frozenset[int] = frozenset()
+        else:
+            roles = frozenset(int(r) for r in member.get("roles", []))
+        if len(self._member_roles) >= MEMBER_CACHE_MAX:
+            self._member_roles = {k: v for k, v in self._member_roles.items() if now - v[0] < MEMBER_CACHE_SECONDS}
+        self._member_roles[key] = (now, roles)
+        return roles
