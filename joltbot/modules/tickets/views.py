@@ -61,6 +61,30 @@ def _custom_id(new_id: str, legacy: bool) -> str:
     return LEGACY_IDS[new_id] if legacy else new_id
 
 
+async def staff_check(bot: JoltBot, interaction: discord.Interaction) -> bool:
+    """Allow the click only if the user is staff in this server right now.
+
+    Settings and roles are read fresh, so removing someone's staff role (or
+    changing the staff roles on the dashboard) takes effect on their next click.
+
+    Args:
+        bot: Running bot (provides the database).
+        interaction: The button or select interaction to check.
+
+    Returns:
+        True for staff. Otherwise replies with the server's "not staff" message
+        and returns False.
+    """
+    if interaction.guild_id is None:
+        return False
+    ctx = await load_context(bot, interaction.guild_id)
+    if not is_staff(interaction.user, ctx.settings):
+        text = render(ctx.settings.messages.not_staff, server=interaction.guild.name if interaction.guild else "")
+        await interaction.response.send_message(text[:2000], ephemeral=True)
+        return False
+    return True
+
+
 # ---------------------------------------------------------------- applicant side
 
 
@@ -183,14 +207,7 @@ class TicketControlView(discord.ui.View):
             self.add_item(button)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.guild_id is None:
-            return False
-        ctx = await load_context(self.bot, interaction.guild_id)
-        if not is_staff(interaction.user, ctx.settings):
-            text = render(ctx.settings.messages.not_staff, server=interaction.guild.name if interaction.guild else "")
-            await interaction.response.send_message(text[:2000], ephemeral=True)
-            return False
-        return True
+        return await staff_check(self.bot, interaction)
 
     async def _open_ticket(self, interaction: discord.Interaction) -> Ticket | None:
         ticket = await store.get_by_channel(self.bot.db, interaction.channel_id or 0)
@@ -241,10 +258,8 @@ class TicketControlView(discord.ui.View):
 class _StaffPrompt(discord.ui.View):
     """Base for the short-lived private prompts only the clicking staff member sees.
 
-    TODO: Unlike TicketControlView, this base does not re-run ``is_staff`` in
-    ``interaction_check``. Risk is mitigated because prompts are ephemeral (only
-    the clicker sees them), but a shared client or forwarded ephemeral could still
-    confirm Accept/Deny/Close without a second staff check.
+    Every click on a prompt re-checks staff, like the ticket buttons do. A prompt
+    stays open for minutes, and someone can lose their staff role in that time.
     """
 
     def __init__(self, bot: JoltBot, ticket: Ticket, timeout: float = 300) -> None:
@@ -252,6 +267,9 @@ class _StaffPrompt(discord.ui.View):
         self.bot = bot
         self.ticket = ticket
         self.message: discord.Message | discord.WebhookMessage | None = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await staff_check(self.bot, interaction)
 
     async def _finish(self, interaction: discord.Interaction, error: str | None, success: str) -> None:
         self.stop()

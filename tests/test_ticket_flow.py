@@ -13,7 +13,15 @@ import pytest
 from joltbot.modules.tickets import store
 from joltbot.modules.tickets.context import load_context
 from joltbot.modules.tickets.service import DISCORD_TROUBLE, TicketManager
-from joltbot.modules.tickets.views import NOT_SET_UP, ApplicationModal, PanelView, TicketControlView
+from joltbot.modules.tickets.views import (
+    NOT_SET_UP,
+    AcceptView,
+    ApplicationModal,
+    CloseConfirmView,
+    DenyActionView,
+    PanelView,
+    TicketControlView,
+)
 
 from .conftest import GUILD_A, GUILD_B
 from .fakes import (
@@ -434,6 +442,26 @@ async def test_staff_buttons_only_act_on_this_servers_open_ticket(world):
 
     await store.claim(world.db, ticket.id, outcome="closed", handled_by=STAFF_ID)
     assert await view._open_ticket(fake_interaction(world.guild, world.staff, channel)) is None
+
+
+@pytest.mark.parametrize("prompt", ["accept", "deny", "close"])
+async def test_confirm_prompts_recheck_staff(world, prompt):
+    # The prompt stays open for up to 5 minutes; someone can lose their staff role in between.
+    ticket, channel = await _open(world)
+    ctx = await load_context(world.bot, GUILD_A)
+    view = {
+        "accept": lambda: AcceptView(world.bot, ticket, ctx.settings),
+        "deny": lambda: DenyActionView(world.bot, ticket, "reason"),
+        "close": lambda: CloseConfirmView(world.bot, ticket),
+    }[prompt]()
+
+    assert await view.interaction_check(fake_interaction(world.guild, world.staff, channel)) is True
+
+    await world.staff.remove_roles(world.roles.staff)
+    click = fake_interaction(world.guild, world.staff, channel)
+    assert await view.interaction_check(click) is False
+    click.response.send_message.assert_awaited_once_with("Only staff can do this.", ephemeral=True)
+    view.stop()
 
 
 # ------------------------------------------------------------------ the panel button and form
