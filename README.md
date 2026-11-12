@@ -50,13 +50,13 @@ All slash commands are under `/tickets`, **guild only**. Discord hides them from
 
 | Layer | Tech |
 |---|---|
-| Bot | Python 3.10+ (3.12 recommended), discord.py 2.x |
+| Bot | Python 3.11+ (3.12 recommended), discord.py 2.x |
 | Dashboard | FastAPI, uvicorn, Jinja2, htmx, Tailwind CSS |
 | Data | SQLAlchemy 2 async + aiosqlite (SQLite WAL); Alembic migrations |
 | Config | pydantic-settings from environment / `.env` |
 | Deploy | Docker Compose; optional Caddy |
 
-Pinned deps: [`requirements.txt`](requirements.txt). Full lock: `requirements.lock`.
+Pinned deps: [`requirements.txt`](requirements.txt). Full locks with a checksum for every file: `requirements.lock` (production) and `requirements-dev.lock` (plus test tools).
 
 ---
 
@@ -107,8 +107,9 @@ tests/
 CONTRIBUTING.md           # style, PRs, how to add a module
 Dockerfile, docker-compose.yml, .dockerignore
 requirements.txt          # direct dependencies, exact versions (edit this one)
-requirements.lock         # every dependency, exact versions (generated; used by Docker and CI)
-requirements-dev.txt      # the lock file + pytest + ruff
+requirements.lock         # every dependency, exact versions + checksums (generated; used by Docker)
+requirements-dev.txt      # requirements.txt + pytest + ruff (edit this one)
+requirements-dev.lock     # the same, fully pinned + checksums (generated; used by CI and for development)
 .github/workflows/ci.yml  # lint, format check, tests, Docker build on every push / PR
 ```
 
@@ -192,12 +193,12 @@ If a required variable is missing, the process stops at startup and names it. Lo
 
 ## 4. Local development
 
-You need **Python 3.12** (3.10+ works). In the project folder (PowerShell on Windows):
+You need **Python 3.12** (3.11+ works). In the project folder (PowerShell on Windows):
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate                 # macOS/Linux: source .venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.lock
 copy .env.example .env                 # macOS/Linux: cp .env.example .env
 ```
 
@@ -242,15 +243,18 @@ Invoke-WebRequest https://github.com/tailwindlabs/tailwindcss/releases/download/
 
 ### Changing dependencies
 
-1. Edit the version in `requirements.txt`.
-2. Regenerate the lock file, which pins every sub-dependency for Windows, Linux and macOS:
+1. Edit the version in `requirements.txt` (or `requirements-dev.txt` for a test or lint tool).
+2. Regenerate both lock files. They pin every sub-dependency for Windows, Linux and macOS, with a checksum for every file:
    ```powershell
    pip install uv
-   uv pip compile requirements.txt --universal --python-version 3.12 -o requirements.lock
-   pip install -r requirements-dev.txt
+   uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes -o requirements.lock
+   uv pip compile requirements-dev.txt --universal --python-version 3.11 --generate-hashes -c requirements.lock -o requirements-dev.lock
+   pip install --require-hashes -r requirements-dev.lock
    pytest
    ```
-3. Commit both files.
+3. Commit the file you edited and both lock files. A test fails if they disagree.
+
+Installs check those checksums (`--require-hashes` in the Dockerfile and CI), so a package that was swapped or tampered with after the lock was made is refused. The Dockerfile checks its two direct downloads (the Tailwind CLI and htmx) the same way; the checksums sit next to the version numbers at the top of the file.
 
 ---
 

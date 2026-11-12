@@ -6,7 +6,7 @@ operator setup is in the [README](README.md).
 
 ## Prerequisites
 
-- Python **3.12** recommended (3.10+ works; see `requires-python` in `pyproject.toml`)
+- Python **3.12** recommended (3.11+ works; see `requires-python` in `pyproject.toml`)
 - A Discord application with **Server Members** and **Message Content** intents
 - Prefer a **separate test server and bot app** so production (e.g. King of Chaos) is untouched
 
@@ -15,7 +15,7 @@ operator setup is in the [README](README.md).
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate                 # macOS/Linux: source .venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.lock
 copy .env.example .env                 # macOS/Linux: cp .env.example .env
 # fill DISCORD_* and SESSION_SECRET; leave PUBLIC_BASE_URL=http://localhost:8000
 alembic upgrade head
@@ -43,7 +43,7 @@ Docker image build that hits `/health`.
 
 ## Code style
 
-- **Formatter / linter:** Ruff (`line-length` 120, target `py310`). Imports at
+- **Formatter / linter:** Ruff (`line-length` 120, target `py311`). Imports at
   the top of the file — no inline imports unless a circular dependency forces it
   and the reason is commented.
 - **Type hints:** Prefer modern annotations (`X | None`, `list[str]`). Match
@@ -90,17 +90,19 @@ guild access is checked, and how tickets are structured as a reference module.
 
 ## Changing dependencies
 
-1. Edit the pin in `requirements.txt`.
-2. Regenerate the lock file:
+1. Edit the pin in `requirements.txt` (or `requirements-dev.txt` for a test or lint tool).
+2. Regenerate both lock files (they carry a checksum for every package file):
 
    ```powershell
    pip install uv
-   uv pip compile requirements.txt --universal --python-version 3.12 -o requirements.lock
-   pip install -r requirements-dev.txt
+   uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes -o requirements.lock
+   uv pip compile requirements-dev.txt --universal --python-version 3.11 --generate-hashes -c requirements.lock -o requirements-dev.lock
+   pip install --require-hashes -r requirements-dev.lock
    pytest
    ```
 
-3. Commit both `requirements.txt` and `requirements.lock`.
+3. Commit the file you edited plus `requirements.lock` and `requirements-dev.lock`.
+   `tests/test_dependencies.py` fails if the three disagree or a checksum is missing.
 
 ## Reporting issues
 
