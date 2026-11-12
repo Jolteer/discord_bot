@@ -56,16 +56,24 @@ async def reserve(
         return None
 
 
-async def set_channel(db: Database, ticket_id: int, channel_id: int) -> None:
+async def set_channel(db: Database, ticket_id: int, channel_id: int) -> bool:
     """Attach the created Discord channel id to an open ticket.
 
     Args:
         db: Shared database.
         ticket_id: Ticket primary key.
         channel_id: Discord text channel snowflake.
+
+    Returns:
+        True if the ticket was still ``open`` and now has the channel. False if
+        it was closed or removed in the meantime; the caller must then delete
+        the channel, because no ticket points at it.
     """
     async with db.session() as session, session.begin():
-        await session.execute(update(Ticket).where(Ticket.id == ticket_id).values(channel_id=channel_id))
+        result = await session.execute(
+            update(Ticket).where(Ticket.id == ticket_id, Ticket.status == "open").values(channel_id=channel_id)
+        )
+        return result.rowcount == 1
 
 
 async def delete_reservation(db: Database, ticket_id: int) -> None:

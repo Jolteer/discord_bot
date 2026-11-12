@@ -66,6 +66,8 @@ class TicketManager:
         self.bot = bot
         # Ticket IDs this process is currently working on. recover() leaves these alone.
         self._busy: set[int] = set()
+        # Ticket IDs whose channel is being created right now. recover() leaves these alone too.
+        self._creating: set[int] = set()
         self._tasks: set[asyncio.Task] = set()
 
     @property
@@ -211,46 +213,30 @@ class TicketManager:
                 return None, f"You already have an open application: <#{existing.channel_id}>"
             return None, "Your previous ticket is still being closed. Try again in a few seconds."
 
+        # recover() must not take this reservation for an abandoned one while Discord is
+        # still creating its channel (that can take minutes when the bot is rate limited).
+        self._creating.add(ticket_id)
         try:
-            channel = await guild.create_text_channel(
-                name=ticket_channel_name(member),
-                category=category,
-                overwrites=self._overwrites(guild, member, ctx),
-                topic=f"Ticket #{ticket_id} for {member} ({member.id})",
-                reason=f"Ticket for {member} ({member.id})",
-            )
-        except discord.Forbidden:
-            await store.delete_reservation(self.db, ticket_id)
-            await self.bot.report_issue(
-                guild.id,
-                "tickets.create_channel",
-                f"I couldn't create a ticket channel in **{category.name}**. JoltBot needs Manage Channels and "
-                "Manage Roles there, plus every permission it gives out (View, Send, Attach Files, Embed Links, "
-                "Read History, Manage Messages). Run /tickets diagnostics in Discord for details.",
-            )
-            return None, "I couldn't create your ticket (missing permissions). Please let a staff member know."
-        except discord.HTTPException as e:
-            await store.delete_reservation(self.db, ticket_id)
-            log.warning("Guild %s: failed to create ticket channel: %s", guild.id, e)
-            if len(category.channels) >= 50:
-                await self.bot.report_issue(
-                    guild.id,
-                    "tickets.category_full",
-                    f"The **{category.name}** category is full (Discord allows 50 channels).",
-                )
-                return None, "The ticket category is full. Please let a staff member know."
-            return None, "Discord refused to create the ticket right now. Please try again shortly."
-        except Exception:
-            # e.g. the connection dropped. Always undo the reservation so they can retry.
-            await store.delete_reservation(self.db, ticket_id)
-            log.exception("Guild %s: unexpected error creating ticket channel", guild.id)
-            return None, DISCORD_TROUBLE
+            channel, error = await self._create_channel(member, ctx, category, ticket_id)
+            if channel is None:
+                # Always undo the reservation, so the applicant can try again.
+                await store.delete_reservation(self.db, ticket_id)
+                return None, error
+            attached = await store.set_channel(self.db, ticket_id, channel.id)
+        finally:
+            self._creating.discard(ticket_id)
 
+        ticket = await store.get(self.db, ticket_id) if attached else None
+        if ticket is None:
+            # The ticket was closed while its channel was being created (the applicant left
+            # the server). Nothing points at the new channel, so remove it again.
+            try:
+                await channel.delete(reason=f"Ticket #{ticket_id} was closed before it finished opening")
+            except (discord.HTTPException, OSError) as e:
+                log.warning("Guild %s: couldn't remove unused ticket channel %s: %s", guild.id, channel, e)
+            return None, "Your application was closed before it finished opening. Please try again."
         await self.bot.resolve_issue(guild.id, "tickets.create_channel")
         await self.bot.resolve_issue(guild.id, "tickets.category_full")
-        await store.set_channel(self.db, ticket_id, channel.id)
-        ticket = await store.get(self.db, ticket_id)
-        assert ticket is not None
 
         from .views import TicketControlView  # local import avoids a circular import
 
@@ -269,6 +255,54 @@ class TicketManager:
         except (discord.HTTPException, OSError) as e:
             log.warning("Guild %s: created %s but couldn't post the application in it: %s", guild.id, channel, e)
         log.info("Guild %s: opened ticket #%s (%s) for %s", guild.id, ticket_id, channel.name, member.id)
+        return channel, None
+
+    async def _create_channel(
+        self, member: discord.Member, ctx: TicketContext, category: discord.CategoryChannel, ticket_id: int
+    ) -> tuple[discord.TextChannel | None, str | None]:
+        """Create the private ticket channel.
+
+        Args:
+            member: Applicant.
+            ctx: Fresh guild ticket context.
+            category: The server's ticket category.
+            ticket_id: The reserved ticket, for the channel topic.
+
+        Returns:
+            ``(channel, None)`` on success, or ``(None, error_message)`` for the applicant.
+        """
+        guild = member.guild
+        try:
+            channel = await guild.create_text_channel(
+                name=ticket_channel_name(member),
+                category=category,
+                overwrites=self._overwrites(guild, member, ctx),
+                topic=f"Ticket #{ticket_id} for {member} ({member.id})",
+                reason=f"Ticket for {member} ({member.id})",
+            )
+        except discord.Forbidden:
+            await self.bot.report_issue(
+                guild.id,
+                "tickets.create_channel",
+                f"I couldn't create a ticket channel in **{category.name}**. JoltBot needs Manage Channels and "
+                "Manage Roles there, plus every permission it gives out (View, Send, Attach Files, Embed Links, "
+                "Read History, Manage Messages). Run /tickets diagnostics in Discord for details.",
+            )
+            return None, "I couldn't create your ticket (missing permissions). Please let a staff member know."
+        except discord.HTTPException as e:
+            log.warning("Guild %s: failed to create ticket channel: %s", guild.id, e)
+            if len(category.channels) >= 50:
+                await self.bot.report_issue(
+                    guild.id,
+                    "tickets.category_full",
+                    f"The **{category.name}** category is full (Discord allows 50 channels).",
+                )
+                return None, "The ticket category is full. Please let a staff member know."
+            return None, "Discord refused to create the ticket right now. Please try again shortly."
+        except Exception:
+            # e.g. the connection dropped.
+            log.exception("Guild %s: unexpected error creating ticket channel", guild.id)
+            return None, DISCORD_TROUBLE
         return channel, None
 
     # ------------------------------------------------------------------ decisions
@@ -753,7 +787,7 @@ class TicketManager:
         if guild.unavailable:
             return
         for t in await store.list_for_guild(self.db, guild.id, "open"):
-            if t.id in self._busy:
+            if t.id in self._busy or t.id in self._creating:
                 continue
             if t.channel_id is None:
                 # Reserved but the channel was never created (crash or error mid-way).

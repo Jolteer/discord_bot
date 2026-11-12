@@ -641,3 +641,41 @@ async def test_an_accepted_applicant_who_left_before_the_restart_is_noted(world)
 
     assert ticket.status == "closed"
     assert any("no longer in the server" in note for note in ticket.note_lines)
+
+
+# ------------------------------------------------------------------ nothing is left behind half-created
+
+
+async def test_leaving_while_the_ticket_is_being_created_leaves_no_orphan_channel(world):
+    create = world.guild.create_text_channel
+
+    async def create_while_the_applicant_leaves(**options):
+        channel = await create(**options)
+        world.guild.remove_member(APPLICANT_ID)
+        await world.manager.handle_member_left(GUILD_A, APPLICANT_ID)
+        return channel
+
+    world.guild.create_text_channel = create_while_the_applicant_leaves
+    ctx = await load_context(world.bot, GUILD_A)
+    channel, error = await world.manager.create_ticket(world.applicant, ctx, ANSWERS)
+    await settle(world.manager)
+
+    assert channel is None and "try again" in error
+    (created,) = world.guild.created_channels
+    created.delete.assert_awaited_once()
+    created.send.assert_not_awaited()  # no application posted into a channel nobody owns
+    assert await store.get_active_by_user(world.db, GUILD_A, APPLICANT_ID) is None
+    assert await store.get_by_channel(world.db, created.id) is None
+
+
+async def test_recovery_leaves_a_ticket_alone_while_its_channel_is_being_created(world):
+    # Discord can take a long time to create a channel when it is rate limiting the bot.
+    ticket_id = await store.reserve(world.db, guild_id=GUILD_A, user_id=APPLICANT_ID, username="u", answers=ANSWERS)
+    long_ago = utcnow() - timedelta(seconds=STUCK_AFTER_SECONDS + 60)
+    async with world.db.session() as session, session.begin():
+        await session.execute(update(Ticket).where(Ticket.id == ticket_id).values(created_at=long_ago))
+    world.manager._creating.add(ticket_id)
+
+    await world.manager.recover(world.guild)
+
+    assert await store.get(world.db, ticket_id) is not None
