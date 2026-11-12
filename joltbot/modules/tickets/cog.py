@@ -16,6 +16,7 @@ from discord.ext import commands, tasks
 from sqlalchemy import select
 
 from ...core.models import PanelMessage
+from . import store
 from .checks import can_run_setup_commands, hierarchy_problems, roles_by_id
 from .context import load_context
 from .diagnostics import ERROR, WARN, run_diagnostics
@@ -37,6 +38,16 @@ async def _setup_check(interaction: discord.Interaction) -> bool:
     ctx = await load_context(bot, interaction.guild_id)
     if not can_run_setup_commands(interaction.user, ctx.settings):
         raise app_commands.CheckFailure("You need Manage Server (or a staff role) to use this.")
+    return True
+
+
+async def _manage_server_check(interaction: discord.Interaction) -> bool:
+    """Slash-command check for bulk actions: Manage Server only, a staff role is not enough."""
+    user = interaction.user
+    if not isinstance(user, discord.Member) or not user.guild_permissions.manage_guild:
+        raise app_commands.CheckFailure(
+            "You need Manage Server to use this: it gives the accepted role to many members at once."
+        )
     return True
 
 
@@ -64,7 +75,8 @@ class Tickets(commands.GroupCog, group_name="tickets", group_description="Ticket
 
     Permissions:
         Discord hides the group from members without Manage Server by default.
-        Runtime checks also allow configured staff roles (``_setup_check``).
+        Runtime checks also allow configured staff roles (``_setup_check``), except
+        for ``grant-existing``, which needs Manage Server (``_manage_server_check``).
 
     Cooldowns:
         None on slash commands. ``grant-existing`` is serialized per guild via a lock.
@@ -294,6 +306,8 @@ class Tickets(commands.GroupCog, group_name="tickets", group_description="Ticket
             interaction: Slash interaction in a guild.
         """
         assert interaction.guild is not None
+        # Discord wants an answer within 3 seconds; the checks below can take longer on a big server.
+        await interaction.response.defer(ephemeral=True, thinking=True)
         ctx = await load_context(self.bot, interaction.guild.id)
         findings = run_diagnostics(interaction.guild, ctx.settings, ctx.enabled)
         errors = sum(f.level == ERROR for f in findings)
@@ -305,19 +319,23 @@ class Tickets(commands.GroupCog, group_name="tickets", group_description="Ticket
             colour=colour,
         )
         embed.set_footer(text=f"{errors} error(s), {warns} warning(s)")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(
         name="grant-existing",
         description="One time: give the accepted-member role(s) to everyone already here.",
     )
-    @app_commands.check(_setup_check)
+    @app_commands.check(_manage_server_check)
     async def grant_existing(self, interaction: discord.Interaction) -> None:
         """Bulk-grant accept roles to members who lack accept and pending roles.
 
+        Members with an open application are left out: staff accept (or deny)
+        them in their ticket.
+
         Who can use it:
-            Manage Server, or a configured staff role. Asks for a confirm button
-            before running. Only one grant runs per guild at a time.
+            Manage Server only; a staff role is not enough, because this gives
+            the accepted role to many members at once. Asks for a confirm
+            button before running. Only one grant runs per guild at a time.
 
         Example:
             ``/tickets grant-existing`` then click **Give them the role(s)**.
@@ -330,34 +348,47 @@ class Tickets(commands.GroupCog, group_name="tickets", group_description="Ticket
         """
         guild = interaction.guild
         assert guild is not None
+        # Discord wants an answer within 3 seconds; walking the member list can take longer.
+        await interaction.response.defer(ephemeral=True, thinking=True)
         ctx = await load_context(self.bot, guild.id)
         roles = roles_by_id(guild, ctx.settings.accept_role_ids)
         if not roles:
-            await interaction.response.send_message(
-                "❌ Pick a 'role given on accept' on the dashboard first.", ephemeral=True
-            )
+            await interaction.followup.send("❌ Pick a 'role given on accept' on the dashboard first.", ephemeral=True)
             return
         if problems := hierarchy_problems(guild, roles):
-            await interaction.response.send_message("❌ " + "\n".join(problems), ephemeral=True)
+            await interaction.followup.send("❌ " + "\n".join(problems), ephemeral=True)
             return
         if self._grant_locks.setdefault(guild.id, asyncio.Lock()).locked():
-            await interaction.response.send_message("This is already running.", ephemeral=True)
+            await interaction.followup.send("This is already running.", ephemeral=True)
             return
         pending = guild.get_role(ctx.settings.pending_role_id or 0)
-        targets = [
+        eligible = [
             m
             for m in guild.members
             if not m.bot and not set(roles).intersection(m.roles) and (pending is None or pending not in m.roles)
         ]
+        # Someone with an open application is waiting for staff to decide; this must not decide for them.
+        applying = await store.list_active_user_ids(self.bot.db, guild.id)
+        targets = [m for m in eligible if m.id not in applying]
+        left_out = len(eligible) - len(targets)
         if not targets:
-            await interaction.response.send_message(
-                "Nobody to update. Everyone already has the role(s).", ephemeral=True
-            )
+            await interaction.followup.send("Nobody to update. Everyone already has the role(s).", ephemeral=True)
             return
         names = ", ".join(r.mention for r in roles)
-        await interaction.response.send_message(
-            f"This gives {names} to **{len(targets)}** member(s) who have neither it nor the pending role "
-            "(people who were here before verification). Large servers take a few minutes. Continue?",
+        who = "who have neither it nor the pending role" if pending is not None else "who don't have it yet"
+        lines = [
+            f"This gives {names} to **{len(targets)}** member(s) {who} (people who were here before verification)."
+        ]
+        if pending is None:
+            lines.append(
+                "⚠️ No pending role is set, so that includes everyone who joined and hasn't applied yet. "
+                "After this they count as verified."
+            )
+        if left_out:
+            lines.append(f"**{left_out}** member(s) with an open application are left out; staff decide those.")
+        lines.append("Large servers take a few minutes. Continue?")
+        await interaction.followup.send(
+            "\n".join(lines),
             view=GrantConfirmView(self, targets, roles),
             ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),

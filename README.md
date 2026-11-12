@@ -38,13 +38,13 @@ JoltBot runs as **two processes** that share one SQLite database:
 
 ## Commands
 
-All slash commands are under `/tickets`, **guild only**. Discord hides them from members without **Manage Server** by default (`default_permissions`). Members with a configured **staff role** can also run them once they can see the commands (Server Settings → Integrations → JoltBot to grant visibility). No command cooldowns.
+All slash commands are under `/tickets`, **guild only**. Discord hides them from members without **Manage Server** by default (`default_permissions`). Members with a configured **staff role** can also run `panel` and `diagnostics` once they can see the commands (Server Settings → Integrations → JoltBot to grant visibility). No command cooldowns.
 
 | Command | Arguments | Who can use it | What it does |
 |---|---|---|---|
 | `/tickets panel` | none | Manage Server **or** staff role | Posts (or re-posts) the application panel in the configured panel channel, pins it when possible, and records the message ID so only one panel exists |
 | `/tickets diagnostics` | none | Manage Server **or** staff role | Ephemeral report of bot permissions, role order, category limits, and setup gaps |
-| `/tickets grant-existing` | none (confirm button) | Manage Server **or** staff role | One-time bulk: give accept role(s) to members who have neither accept nor pending roles |
+| `/tickets grant-existing` | none (confirm button) | Manage Server only | One-time bulk: give accept role(s) to members who have neither accept nor pending roles. Members with an open application are left out |
 
 **UI (not slash commands):** panel **Open Application** (anyone eligible); ticket **Accept** / **Deny** / **Close** (staff). Confirmations are ephemeral.
 
@@ -313,7 +313,7 @@ These steps are the same for every server, and each server's settings are its ow
    - `/tickets diagnostics` lists every channel a pending member can still see.
    - Check your work with **Server Settings → Roles → (pending role) → View Server As Role**.
 
-The `/tickets` commands are only visible to members with **Manage Server** by default. To let other roles see them, go to **Server Settings → Integrations → JoltBot**. Members with a staff role can also run them.
+The `/tickets` commands are only visible to members with **Manage Server** by default. To let other roles see them, go to **Server Settings → Integrations → JoltBot**. Members with a staff role can also run `panel` and `diagnostics`; `grant-existing` always needs Manage Server.
 
 ---
 

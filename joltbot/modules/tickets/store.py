@@ -133,6 +133,23 @@ async def get_active_by_user(db: Database, guild_id: int, user_id: int) -> Ticke
         return result.scalar_one_or_none()
 
 
+async def list_active_user_ids(db: Database, guild_id: int) -> set[int]:
+    """Members of a guild who have an open or closing ticket right now.
+
+    Args:
+        db: Shared database.
+        guild_id: Discord guild snowflake.
+
+    Returns:
+        Their Discord user IDs.
+    """
+    async with db.session() as session:
+        result = await session.execute(
+            select(Ticket.user_id).where(Ticket.guild_id == guild_id, Ticket.status.in_(ACTIVE))
+        )
+        return set(result.scalars())
+
+
 async def list_for_guild(db: Database, guild_id: int, status: str) -> list[Ticket]:
     """List tickets for a guild filtered by status.
 

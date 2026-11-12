@@ -108,6 +108,11 @@ class FakeGuild:
 
     # --- what the bot calls --------------------------------------------------
 
+    @property
+    def members(self) -> list[Any]:
+        """The cached members, like ``discord.Guild.members`` (the bot itself is left out)."""
+        return list(self._members.values())
+
     def get_role(self, role_id: int) -> FakeRole | None:
         return self._roles.get(role_id)
 
