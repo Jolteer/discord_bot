@@ -1,21 +1,24 @@
 {% extends "guild/_layout.html" %}
+{% import "_form.html" as f %}
+{% import "_icons.html" as i %}
 {% block page %}
-<h1 class="text-xl font-bold tracking-tight">Audit log</h1>
-<p class="mt-1 text-sm text-jb-muted">Every settings change for this server, newest first.</p>
+{{ f.page_head("Audit log", "Every settings change for this server, newest first.") }}
 {% if entries %}
-  <div class="jb-card mt-4 overflow-hidden">
-    <div class="overflow-x-auto">
-      <table class="w-full text-left text-sm">
-        <thead class="bg-jb-surface-2 text-xs uppercase tracking-wide text-jb-subtle">
-          <tr><th class="px-3 py-2 font-semibold">When (UTC)</th><th class="px-3 py-2 font-semibold">Who</th><th class="px-3 py-2 font-semibold">What changed</th></tr>
-        </thead>
-        <tbody id="audit-rows" class="divide-y divide-jb-border">
-          {% include "guild/_audit_rows.html" %}
-        </tbody>
-      </table>
-    </div>
+  <div class="jb-card mt-6 overflow-hidden">
+    <table class="jb-table">
+      <thead>
+        <tr><th scope="col">When (UTC)</th><th scope="col">Who</th><th scope="col">What changed</th></tr>
+      </thead>
+      <tbody id="audit-rows">
+        {% include "guild/_audit_rows.html" %}
+      </tbody>
+    </table>
   </div>
 {% else %}
-  <p class="mt-4 text-sm text-jb-muted">No changes yet.</p>
+  <div class="jb-empty mt-6">
+    <span class="jb-empty-icon">{{ i.icon("history", "h-6 w-6") }}</span>
+    <p class="font-semibold">No changes yet</p>
+    <p class="max-w-sm text-sm text-jb-muted">When someone saves a setting for this server, it shows up here with who did it and what it was before.</p>
+  </div>
 {% endif %}
 {% endblock %}
