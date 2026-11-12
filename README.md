@@ -507,10 +507,11 @@ docker compose up -d                                             # restart so bo
 - It works when the bot is offline too, because a webhook needs no bot connection. A wrong token or a missing setting is reported on every restart attempt (about once a minute under Docker) until it's fixed.
 - Server admins don't see these. Problems in their own server appear as warnings on their dashboard.
 
-**Is the bot up?** Three places show it, all reading the same heartbeat:
+**Is the bot up?** Four places show it, all reading the same heartbeat:
 
 - `docker compose ps`: the bot is `healthy` or `unhealthy`.
 - The dashboard overview shows "JoltBot is offline right now" to server admins.
+- With `ALERT_WEBHOOK_URL` set, the dashboard posts one alert when the bot has been disconnected for 5 minutes (a hung bot can't report itself).
 - `GET /health/bot` on the dashboard answers 200 while the bot is connected and 503 otherwise. Point a free uptime monitor at `https://your-domain/health/bot` to be told when the bot goes down, including when the whole server is down (which the alert webhook can't report).
 
 **Backups:** the `joltbot-data` volume holds all settings and ticket state. `deploy/backup.sh` copies it out safely while JoltBot keeps running:

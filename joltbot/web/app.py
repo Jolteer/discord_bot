@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import importlib
 import logging
 from contextlib import asynccontextmanager
@@ -20,6 +22,7 @@ from ..modules.registry import MODULES
 from .rendering import STATIC_DIR, css_built, render
 from .routes import auth, guild, health, pages
 from .security import LoginRequired
+from .watchdog import BotWatchdog
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +92,12 @@ def create_app(
         if check_schema and (problem := await schema_problem(db)):
             raise RuntimeError(problem)
         log.info("Dashboard ready at %s", config.public_base_url)
+        # Raises the alarm (one ERROR log line) when the bot stops reporting in.
+        watchdog = asyncio.create_task(BotWatchdog(db).run())
         yield
+        watchdog.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watchdog
         await discord.aclose()
         await db.dispose()
 

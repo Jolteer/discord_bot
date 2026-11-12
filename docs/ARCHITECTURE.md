@@ -205,6 +205,8 @@ Guild-owned rows use `ON DELETE CASCADE` when a left guild is purged.
   every minute while the gateway connection is up; stale after 3 minutes. Read by
   `/health/bot`, the overview banner and the bot's Docker health check
   (`python -m joltbot.bot.healthcheck`). `/health` stays independent of the bot.
+  The dashboard process also watches it (`web/watchdog.py`) and logs one ERROR,
+  which becomes an operator alert, when the bot has been gone for 5 minutes.
 - Optimistic concurrency on settings saves (`StaleSettingsError`).
 - Backups (`scripts/backup.py`, `deploy/backup.sh`): SQLite online backup, with
   login sessions removed from the copy and an integrity check. `deploy/update.sh`
