@@ -7,6 +7,7 @@ saves here can actually be sent to Discord.
 
 from __future__ import annotations
 
+import re
 from typing import NamedTuple
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -33,11 +34,56 @@ class ExtraRoleChoice(BaseModel):
     emoji: str | None = Field(None, max_length=64)
 
 
+_EMOJI_NAME = re.compile(r":?([A-Za-z0-9_]{2,32}):?")
+_EMOJI_MARKUP = re.compile(r"<a?:[A-Za-z0-9_]{2,32}:(\d{15,20})>")
+
+
+def custom_emoji_name(text: str | None) -> str | None:
+    """The emoji's name, if ``text`` names one of the server's own emojis.
+
+    Admins type the name the way Discord shows it, ``infantry`` or
+    ``:infantry:``. The bot looks the emoji up in the server by that name when
+    it builds a dropdown.
+
+    Args:
+        text: An option's ``emoji`` setting.
+
+    Returns:
+        The bare name, or ``None`` if ``text`` is empty, a normal emoji, or
+        Discord's full ``<:name:id>`` form.
+    """
+    match = _EMOJI_NAME.fullmatch((text or "").strip())
+    return match.group(1) if match else None
+
+
+def custom_emoji_id(text: str | None) -> int | None:
+    """The emoji's ID, if ``text`` is Discord's full ``<:name:id>`` form."""
+    match = _EMOJI_MARKUP.fullmatch((text or "").strip())
+    return int(match.group(1)) if match else None
+
+
 class ChoiceOption(BaseModel):
     """One option of a dropdown question. Picking it can give a role when the ticket is accepted."""
 
     label: str = Field(min_length=1, max_length=100)
     role_id: OptionalSnowflake = None  # None = just an answer, no role
+    # Icon shown next to the option: a normal emoji, or the name of one of the server's own.
+    emoji: str | None = Field(None, max_length=64)
+
+    @field_validator("emoji", mode="before")
+    @classmethod
+    def _blank_means_no_icon(cls, value: object) -> object:
+        return (value.strip() or None) if isinstance(value, str) else value
+
+    @field_validator("emoji")
+    @classmethod
+    def _looks_like_an_emoji(cls, value: str | None) -> str | None:
+        # Plain words are not an emoji, and Discord rejects a whole message over a bad one.
+        if value and value.isascii() and not (custom_emoji_name(value) or custom_emoji_id(value)):
+            raise ValueError(
+                "The icon must be a normal emoji, or the name of one of this server's emojis (like :infantry:)."
+            )
+        return value
 
 
 class ChoiceQuestion(BaseModel):

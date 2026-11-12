@@ -67,6 +67,7 @@ class FakeGuild:
         self._channels: dict[int, Any] = {}
         self._members: dict[int, Any] = {}
         self._uncached_members: dict[int, Any] = {}
+        self.emojis: list[Any] = []  # the server's own emojis: objects with id, name and animated
         for channel in channels:
             self.add_channel(channel)
         for member in members:

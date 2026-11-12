@@ -62,6 +62,19 @@ class Channel:
 
 
 @dataclass(frozen=True)
+class Emoji:
+    """One of a server's own (custom) emojis."""
+
+    id: int
+    name: str
+    animated: bool
+
+    @property
+    def url(self) -> str:
+        return f"https://cdn.discordapp.com/emojis/{self.id}.{'gif' if self.animated else 'png'}?size=32"
+
+
+@dataclass(frozen=True)
 class GuildData:
     """Everything the dashboard needs about one server, fetched with the bot token."""
 
@@ -71,6 +84,7 @@ class GuildData:
     everyone_permissions: int
     bot_role_ids: list[int]
     fetched_at: float = field(default_factory=time.time)
+    emojis: list[Emoji] = field(default_factory=list)  # the server's own emojis
 
     @property
     def role_ids(self) -> set[int]:
@@ -201,6 +215,7 @@ class DiscordClient:
             raw_roles = await self._request("GET", f"/guilds/{guild_id}/roles", auth=auth)
             raw_channels = await self._request("GET", f"/guilds/{guild_id}/channels", auth=auth)
             member = await self._request("GET", f"/guilds/{guild_id}/members/{await self.bot_user_id()}", auth=auth)
+            raw_emojis = await self._request("GET", f"/guilds/{guild_id}/emojis", auth=auth)
 
             everyone = next((r for r in raw_roles if int(r["id"]) == guild_id), None)
             roles = sorted(
@@ -238,6 +253,14 @@ class DiscordClient:
                 channels,
                 int(everyone["permissions"]) if everyone else 0,
                 [int(r) for r in member.get("roles", [])],
+                emojis=sorted(
+                    (
+                        Emoji(int(e["id"]), e["name"], bool(e.get("animated")))
+                        for e in raw_emojis
+                        if e.get("id") and e.get("name") and e.get("available", True)
+                    ),
+                    key=lambda e: e.name.lower(),
+                ),
             )
             self._cache[guild_id] = data
             return data

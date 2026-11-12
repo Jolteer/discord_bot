@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import select, update
 
 from joltbot.core.config import AppConfig
-from joltbot.core.discord_rest import CATEGORY, TEXT_CHANNEL, Channel, DiscordError, GuildData, Role
+from joltbot.core.discord_rest import CATEGORY, TEXT_CHANNEL, Channel, DiscordError, Emoji, GuildData, Role
 from joltbot.core.guild_settings import load_module
 from joltbot.core.health import write_heartbeat
 from joltbot.core.issues import record_issue
@@ -807,3 +807,42 @@ async def test_clearing_a_dropdown_questions_name_removes_it(db, alice):
     form = ticket_form(GUILD_A, csrf, 2, extra={**_troop_question(ROLE[GUILD_A]), "c_label_0": ""})
     assert (await alice.post(f"/servers/{GUILD_A}/tickets", data=form)).status_code == 303
     assert (await tickets_state(db, GUILD_A)).config.choice_questions == []
+
+
+# --------------------------------------------------------------------------- icons on dropdown options
+
+
+@pytest.fixture
+def infantry_emoji(fake):
+    """Server A has one emoji of its own, called infantry."""
+    fake.data[GUILD_A] = replace(fake.data[GUILD_A], emojis=[Emoji(9001, "infantry", False)])
+
+
+async def test_an_option_icon_is_saved_and_previewed(db, alice, infantry_emoji):
+    csrf = await csrf_of(alice)
+    fields = {**_troop_question(ROLE[GUILD_A]), "c_opt_emoji_0_0": "infantry", "c_opt_emoji_0_1": "❓"}
+    r = await alice.post(f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, 1, extra=fields))
+    assert r.status_code == 303
+
+    options = (await tickets_state(db, GUILD_A)).config.choice_questions[0].options
+    assert [o.emoji for o in options] == ["infantry", "❓"]
+    page = (await alice.get(f"/servers/{GUILD_A}/tickets")).text
+    assert 'name="c_opt_emoji_0_0" value="infantry"' in page
+    assert "https://cdn.discordapp.com/emojis/9001.png" in page  # the admin sees which icon they picked
+
+
+async def test_an_icon_name_the_server_does_not_have_is_refused(db, alice, infantry_emoji):
+    csrf = await csrf_of(alice)
+    fields = {**_troop_question(ROLE[GUILD_A]), "c_opt_emoji_0_0": ":infantery:"}
+    r = await alice.post(f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, 1, extra=fields))
+    page = html.unescape(r.text)
+    assert r.status_code == 400
+    assert "Dropdown question 1, option 1: this server has no emoji called :infantery:" in page
+    assert (await tickets_state(db, GUILD_A)).config.choice_questions == []
+
+
+async def test_plain_text_is_not_an_icon(db, alice):
+    csrf = await csrf_of(alice)
+    fields = {**_troop_question(ROLE[GUILD_A]), "c_opt_emoji_0_0": "my icon"}
+    r = await alice.post(f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, 1, extra=fields))
+    assert r.status_code == 400 and "Dropdown question 1, option 1" in html.unescape(r.text)

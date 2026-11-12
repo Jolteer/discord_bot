@@ -16,6 +16,7 @@ from ...web.routes.guild import guild_context
 from ...web.security import CsrfProtected, GuildAccess, RequireGuild, get_db, get_discord
 from .forms import (
     choice_rows,
+    emoji_errors,
     foreign_id_errors,
     form_options,
     message_fields,
@@ -63,7 +64,7 @@ async def _render_form(
             "enabled": enabled,
             "version": version,
             "questions": questions,
-            "choices": choice_rows(values),
+            "choices": choice_rows(values, data),
             "extras": extras,
             "messages": message_fields(values.get("messages") or {}),
             "errors": errors,
@@ -149,7 +150,7 @@ async def save(request: Request, access: RequireGuild):
         settings = TicketSettings.model_validate(values)
     except ValidationError as e:
         return await fail(validation_errors(e))
-    if errors := foreign_id_errors(settings, data):
+    if errors := foreign_id_errors(settings, data) + emoji_errors(settings, data):
         return await fail(errors)
     async with get_db(request).session() as session:
         previous = (await load_module(session, access.guild_id, "tickets")).config

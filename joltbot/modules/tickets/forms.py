@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from ...core.discord_rest import GuildData
 from ...core.permissions import ADMINISTRATOR, BOT_PERMISSIONS, elevated_permission_names
-from .settings import PLACEHOLDERS, TicketMessages, TicketSettings
+from .settings import PLACEHOLDERS, TicketMessages, TicketSettings, custom_emoji_id, custom_emoji_name
 
 MAX_QUESTIONS = 5
 BLANK_EXTRA_ROWS = 3  # empty rows shown so admins can add extra role choices
@@ -102,8 +102,9 @@ def parse_form(form: Any) -> dict[str, Any]:
         options = []
         for o in range(MAX_CHOICE_OPTIONS):
             option_label, role_id = _text(form, f"c_opt_label_{q}_{o}"), _text(form, f"c_opt_role_{q}_{o}")
-            if option_label or role_id:
-                options.append({"label": option_label, "role_id": role_id or None})
+            emoji = _text(form, f"c_opt_emoji_{q}_{o}")
+            if option_label or role_id or emoji:
+                options.append({"label": option_label, "role_id": role_id or None, "emoji": emoji or None})
         choices.append({"label": label, "required": f"c_required_{q}" in form, "options": options})
     extras = []
     i = 0
@@ -206,6 +207,32 @@ def foreign_id_errors(settings: TicketSettings, data: GuildData) -> list[str]:
     ):
         if channel_id is not None and channel_id not in allowed:
             errors.append(f"{label}: that channel isn't in this server. Refresh the page and pick again.")
+    return errors
+
+
+def emoji_errors(settings: TicketSettings, data: GuildData) -> list[str]:
+    """Check that every dropdown icon given by name is one of this server's emojis.
+
+    A misspelt name would otherwise just show no icon, and the admin would not
+    know why.
+
+    Args:
+        settings: Candidate ticket settings from the form.
+        data: Live roles/channels/emojis for the guild.
+
+    Returns:
+        Error lines naming the question and option; empty if every name exists.
+    """
+    known = {emoji.name for emoji in data.emojis}
+    errors = []
+    for q, question in enumerate(settings.choice_questions, 1):
+        for o, option in enumerate(question.options, 1):
+            name = custom_emoji_name(option.emoji)
+            if name and name not in known:
+                errors.append(
+                    f"Dropdown question {q}, option {o}: this server has no emoji called :{name}:. "
+                    "Check the spelling (capital letters matter), or paste a normal emoji instead."
+                )
     return errors
 
 
@@ -378,7 +405,16 @@ def padded_rows(values: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict
     return questions[:MAX_QUESTIONS], extras
 
 
-def choice_rows(values: dict[str, Any]) -> list[dict[str, Any]]:
+def _emoji_preview_url(emoji: str | None, data: GuildData) -> str | None:
+    """Image address for an option icon that is one of the server's own emojis, to show beside the box."""
+    if name := custom_emoji_name(emoji):
+        return next((e.url for e in data.emojis if e.name == name), None)
+    if emoji_id := custom_emoji_id(emoji):
+        return next((e.url for e in data.emojis if e.id == emoji_id), None)
+    return None  # a normal emoji is already visible in the box itself
+
+
+def choice_rows(values: dict[str, Any], data: GuildData) -> list[dict[str, Any]]:
     """Dropdown questions for the form: the saved ones, then one empty block to add another.
 
     Each question gets a few empty option rows as well. Saving makes more
@@ -386,14 +422,18 @@ def choice_rows(values: dict[str, Any]) -> list[dict[str, Any]]:
 
     Args:
         values: Settings values (saved, or as typed when a save failed).
+        data: Live guild snapshot, for previewing the server's own emojis.
 
     Returns:
         At most ``MAX_CHOICE_QUESTIONS`` blocks of ``{"label", "required", "options"}``.
     """
-    blank_option = {"label": "", "role_id": ""}
+    blank_option = {"label": "", "role_id": "", "emoji": "", "emoji_url": None}
     blocks = []
     for question in list(values.get("choice_questions") or [])[:MAX_CHOICE_QUESTIONS]:
-        options = list(question.get("options") or [])[:MAX_CHOICE_OPTIONS]
+        options = [
+            {**option, "emoji_url": _emoji_preview_url(option.get("emoji"), data)}
+            for option in list(question.get("options") or [])[:MAX_CHOICE_OPTIONS]
+        ]
         options += [blank_option] * min(BLANK_OPTION_ROWS, MAX_CHOICE_OPTIONS - len(options))
         required = question.get("required", True)
         blocks.append({"label": question.get("label", ""), "required": required, "options": options})

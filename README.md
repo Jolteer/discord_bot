@@ -302,7 +302,7 @@ These steps are the same for every server, and each server's settings are its ow
    - Keeping it below your leadership roles means it can never kick them.
 3. **Dashboard → Tickets & verification.** Pick the staff roles, the panel channel, the ticket category, the log channel and the role(s) given on accept.
    - Optionally pick a pending role, extra role choices, your own form questions and messages.
-   - Optionally add **dropdown questions** (for example "Team" or "Region"). Applicants pick from a list before the form, and each option can give a role when staff accept. Those roles must sit below JoltBot's role too.
+   - Optionally add **dropdown questions** (for example "Team" or "Region"). Applicants pick from a list before the form, and each option can give a role when staff accept. Those roles must sit below JoltBot's role too. Each option can show an icon: type the name of one of the server's own emojis (for example `infantry`) or paste a normal emoji.
    - Tick **Ticket module is ON** and save. The page warns you about missing permissions or role-order problems.
 4. **In Discord, run `/tickets panel`** to post and pin the panel, then **`/tickets diagnostics`** for a full check.
    - Optional: on **Dashboard → General**, pick a **Notices channel**. When JoltBot hits a problem in your server (it can't give a role, can't post a transcript, a channel was deleted), it posts it there once, without pinging anyone. The same problems always show as warnings on the dashboard overview.

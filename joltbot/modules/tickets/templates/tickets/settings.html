@@ -108,7 +108,7 @@
         </div>
         <div class="mt-2 space-y-2">
           {% for opt in q.options %}
-            <div class="grid grid-cols-2 gap-2">
+            <div class="grid grid-cols-[1fr_1fr_7rem_1.5rem] items-center gap-2">
               <input name="c_opt_label_{{ qi }}_{{ loop.index0 }}" value="{{ opt.label }}" placeholder="Option {{ loop.index }}" maxlength="100"
                      class="jb-input">
               <select name="c_opt_role_{{ qi }}_{{ loop.index0 }}" class="jb-input">
@@ -117,12 +117,16 @@
                   <option value="{{ r.id }}" {{ 'selected' if r.id == opt.role_id }}>{{ r.name }}{{ ' (above JoltBot)' if not r.assignable }}</option>
                 {% endfor %}
               </select>
+              <input name="c_opt_emoji_{{ qi }}_{{ loop.index0 }}" value="{{ opt.emoji or '' }}" placeholder="Icon" maxlength="64"
+                     class="jb-input">
+              {% if opt.emoji_url %}<img src="{{ opt.emoji_url }}" alt="" class="h-6 w-6" width="24" height="24">{% else %}<span></span>{% endif %}
             </div>
           {% endfor %}
         </div>
       </div>
     {% endfor %}
     <p class="text-xs text-jb-muted">Each question needs at least 2 options. Save to get more empty rows (up to 10 options per question). Roles are given together with the roles above when staff accept the ticket.</p>
+    <p class="text-xs text-jb-muted"><strong>Icon</strong> (optional): type the name of one of this server's emojis, for example <code class="jb-code">infantry</code>, or paste a normal emoji. After saving, the icon shows next to the box.</p>
   {% endcall %}
 
   {% call f.section("Messages", "Placeholders like {user} and {server} are filled in automatically. The preview updates as you type.") %}

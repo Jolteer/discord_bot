@@ -24,7 +24,7 @@ from ...core.templating import render
 from . import store
 from .checks import is_staff
 from .context import load_context
-from .settings import TicketSettings
+from .settings import TicketSettings, custom_emoji_id, custom_emoji_name
 
 if TYPE_CHECKING:
     from ...bot.client import JoltBot
@@ -141,6 +141,34 @@ class ApplicationModal(discord.ui.Modal):
 CHOICE_STEP_TEXT = "**Step 1 of 2.** Pick an option from each list, then press **Continue** to fill in the form."
 
 
+CHOICE_EMOJI_ISSUE = "tickets.choice_emoji"
+
+
+def option_emoji(guild: discord.Guild | None, setting: str | None) -> discord.PartialEmoji | str | None:
+    """Turn a dropdown option's icon setting into something Discord can show.
+
+    Args:
+        guild: The server whose own emojis a name refers to.
+        setting: ``ChoiceOption.emoji``: a normal emoji, the name of one of the
+            server's emojis (``infantry`` or ``:infantry:``), or Discord's full
+            ``<:name:id>`` form.
+
+    Returns:
+        The emoji, or ``None`` for no icon. A named emoji the server no longer
+        has gives ``None``: the option then simply shows without an icon.
+    """
+    if not setting:
+        return None
+    if name := custom_emoji_name(setting):
+        found = discord.utils.get(guild.emojis, name=name) if guild is not None else None
+        if found is None:
+            return None
+        return discord.PartialEmoji(name=found.name, id=found.id, animated=bool(found.animated))
+    if custom_emoji_id(setting):
+        return discord.PartialEmoji.from_str(setting.strip())
+    return setting.strip()  # a normal emoji
+
+
 class ChoiceStepView(discord.ui.View):
     """Step 1 of applying on a server with dropdown questions: one dropdown per question.
 
@@ -153,7 +181,16 @@ class ChoiceStepView(discord.ui.View):
     timeout the applicant simply clicks the panel button again.
     """
 
-    def __init__(self, bot: JoltBot, settings: TicketSettings) -> None:
+    def __init__(
+        self, bot: JoltBot, settings: TicketSettings, guild: discord.Guild | None = None, *, icons: bool = True
+    ) -> None:
+        """
+        Args:
+            bot: Running bot.
+            settings: The server's ticket settings (its dropdown questions).
+            guild: The server, for looking up its own emojis by name.
+            icons: False leaves every icon out (used when Discord refused one).
+        """
         super().__init__(timeout=300)
         self.bot = bot
         self.settings = settings
@@ -161,15 +198,18 @@ class ChoiceStepView(discord.ui.View):
         self.picks: dict[int, int] = {}  # question number -> option number
         self.selects: list[discord.ui.Select] = []
         self.message: discord.InteractionMessage | None = None
+        self.has_icons = False
         for number, question in enumerate(self.questions):
+            options = []
+            for i, option in enumerate(question.options[:25]):
+                emoji = option_emoji(guild, option.emoji) if icons else None
+                self.has_icons = self.has_icons or emoji is not None
+                options.append(discord.SelectOption(label=option.label[:100], value=str(i), emoji=emoji))
             select = discord.ui.Select(
                 placeholder=(question.label if question.required else f"{question.label} (optional)")[:150],
                 min_values=1 if question.required else 0,
                 max_values=1,
-                options=[
-                    discord.SelectOption(label=option.label[:100], value=str(i))
-                    for i, option in enumerate(question.options[:25])
-                ],
+                options=options,
                 row=number,
             )
             select.callback = functools.partial(self._picked, number)
@@ -266,8 +306,26 @@ class PanelView(discord.ui.View):
             return
         if ctx.settings.choice_questions:
             # Dropdown questions first; its Continue button opens the form.
-            view = ChoiceStepView(self.bot, ctx.settings)
-            await interaction.response.send_message(CHOICE_STEP_TEXT, view=view, ephemeral=True)
+            view = ChoiceStepView(self.bot, ctx.settings, member.guild)
+            try:
+                await interaction.response.send_message(CHOICE_STEP_TEXT, view=view, ephemeral=True)
+            except discord.HTTPException as e:
+                if e.status != 400 or not view.has_icons:
+                    raise
+                # Discord rejects the whole message over one emoji it doesn't accept. Applying
+                # matters more than icons, so show the dropdowns without them and tell the admins.
+                view.stop()
+                view = ChoiceStepView(self.bot, ctx.settings, member.guild, icons=False)
+                await interaction.response.send_message(CHOICE_STEP_TEXT, view=view, ephemeral=True)
+                await self.bot.report_issue(
+                    member.guild.id,
+                    CHOICE_EMOJI_ISSUE,
+                    "Discord refused an icon on one of the dropdown questions, so applicants see the options "
+                    "without icons. Check the icons under Tickets → Dropdown questions on the dashboard.",
+                )
+            else:
+                if view.has_icons:
+                    await self.bot.resolve_issue(member.guild.id, CHOICE_EMOJI_ISSUE)
             try:
                 view.message = await interaction.original_response()  # only needed to tidy up on timeout
             except (discord.HTTPException, OSError):

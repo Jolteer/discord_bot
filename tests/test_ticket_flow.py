@@ -875,3 +875,56 @@ async def test_an_accept_cut_short_by_a_restart_gives_the_picked_roles_too(world
     await settle(world.manager)
 
     assert {ACCEPT_ROLE, CAVALRY_ROLE, WHALE_ROLE} <= {role.id for role in world.applicant.roles}
+
+
+# ------------------------------------------------------------------ icons on dropdown options
+
+ICON_QUESTION = {
+    "label": "Troop type",
+    "options": [
+        {"label": "Infantry", "role_id": INFANTRY_ROLE, "emoji": ":infantry:"},  # one of the server's own emojis
+        {"label": "Cavalry", "role_id": CAVALRY_ROLE, "emoji": "🐎"},  # a normal emoji
+        {"label": "Archer", "emoji": "archer_gone"},  # an emoji the server has since deleted
+        {"label": "Not sure yet"},
+    ],
+}
+
+
+async def _icon_step(world, click=None):
+    world.guild.emojis = [SimpleNamespace(id=9001, name="infantry", animated=False)]
+    await _set_dropdowns(world, [ICON_QUESTION])
+    click = click or fake_interaction(world.guild, world.applicant)
+    await PanelView(world.bot).open_application(click)
+    return click
+
+
+async def test_dropdown_options_show_their_icons(world):
+    click = await _icon_step(world)
+    view = click.response.send_message.await_args.kwargs["view"]
+    infantry, cavalry, archer, unsure = view.selects[0].options
+
+    assert (infantry.emoji.name, infantry.emoji.id) == ("infantry", 9001)
+    assert (cavalry.emoji.name, cavalry.emoji.id) == ("🐎", None)
+    assert archer.emoji is None  # no icon, but the option still works
+    assert unsure.emoji is None
+    view.stop()
+
+
+async def test_dropdowns_are_still_shown_when_discord_refuses_an_icon(world):
+    # A wrong emoji makes Discord reject the whole message. Applicants must still be able to apply.
+    click = fake_interaction(world.guild, world.applicant)
+    click.response.send_message.side_effect = [http_error(discord.HTTPException, 400), None]
+
+    await _icon_step(world, click)
+
+    first, second = click.response.send_message.await_args_list
+    assert any(option.emoji for option in first.kwargs["view"].selects[0].options)
+    assert not any(option.emoji for option in second.kwargs["view"].selects[0].options)
+    assert (GUILD_A, "tickets.choice_emoji") in world.bot.issues  # the admin is told on the dashboard
+    first.kwargs["view"].stop()
+    second.kwargs["view"].stop()
+
+
+async def test_icons_that_work_clear_the_dashboard_warning(world):
+    await _icon_step(world)
+    assert (GUILD_A, "tickets.choice_emoji") in world.bot.resolved
