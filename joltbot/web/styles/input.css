@@ -1,98 +1,13 @@
 /* Tailwind input. Build the real stylesheet with (see README):
      tailwindcss -i joltbot/web/styles/input.css -o joltbot/web/static/app.css --minify
-   Tailwind scans these folders for the class names used in templates: */
+
+   The design system itself (colours, type scale, components) lives in
+   templates/_styles.css, so the development fallback in base.html can include
+   the very same file. Change the look there, not here. */
 @import "tailwindcss" source(none);
+@import "../templates/_styles.css";
+
+/* Tailwind scans these folders for the class names used in templates: */
 @source "../templates";
 @source "../../modules";
 @source "../static/app.js";
-
-/* Brand tokens — Discord-inspired dark theme, single blurple accent. */
-@theme {
-  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --color-jb-bg: #0f1115;
-  --color-jb-surface: #16181d;
-  --color-jb-surface-2: #1c1f26;
-  --color-jb-elevated: #22252d;
-  --color-jb-border: rgb(255 255 255 / 0.06);
-  --color-jb-border-strong: rgb(255 255 255 / 0.1);
-  --color-jb-muted: #9ba3af;
-  --color-jb-subtle: #6b7280;
-  --color-jb-text: #e8eaed;
-  --color-jb-accent: #5865f2;
-  --color-jb-accent-hover: #4752c4;
-  --color-jb-accent-soft: rgb(88 101 242 / 0.14);
-  --shadow-jb: 0 1px 2px rgb(0 0 0 / 0.35);
-  --shadow-jb-md: 0 4px 16px rgb(0 0 0 / 0.35);
-}
-
-@layer base {
-  html {
-    color-scheme: dark;
-  }
-
-  body {
-    font-size: 15px;
-    line-height: 1.5;
-  }
-
-  a:focus-visible,
-  button:focus-visible,
-  input:focus-visible,
-  select:focus-visible,
-  textarea:focus-visible,
-  summary:focus-visible {
-    outline: 2px solid var(--color-jb-accent);
-    outline-offset: 2px;
-  }
-
-  ::selection {
-    background: var(--color-jb-accent-soft);
-    color: var(--color-jb-text);
-  }
-}
-
-@layer components {
-  .jb-container {
-    @apply mx-auto w-full max-w-[1100px] px-4;
-  }
-
-  .jb-card {
-    @apply rounded-[10px] border border-jb-border bg-jb-surface shadow-jb;
-  }
-
-  .jb-btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-[10px] bg-jb-accent px-4 py-2 text-sm font-semibold text-white transition duration-150 hover:bg-jb-accent-hover;
-  }
-
-  .jb-btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded-[10px] border border-jb-border-strong bg-transparent px-4 py-2 text-sm font-semibold text-jb-text transition duration-150 hover:bg-jb-elevated;
-  }
-
-  .jb-btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 rounded-[10px] px-4 py-2 text-sm font-semibold text-jb-muted transition duration-150 hover:bg-jb-elevated hover:text-jb-text;
-  }
-
-  .jb-input {
-    @apply w-full rounded-[10px] border border-jb-border-strong bg-jb-bg px-3 py-2 text-sm text-jb-text transition duration-150 placeholder:text-jb-subtle;
-  }
-
-  .jb-input:focus {
-    @apply border-jb-accent outline-none ring-2 ring-jb-accent/30;
-  }
-
-  .jb-nav-link {
-    @apply rounded-lg px-3 py-1.5 text-sm text-jb-muted transition duration-150 hover:bg-jb-elevated hover:text-jb-text;
-  }
-
-  .jb-nav-link-active {
-    @apply bg-jb-elevated font-semibold text-jb-text;
-  }
-
-  .jb-code {
-    @apply rounded-md bg-jb-elevated px-1.5 py-0.5 font-mono text-[13px] text-jb-accent;
-  }
-
-  .jb-section-label {
-    @apply text-xs font-semibold uppercase tracking-wide text-jb-subtle;
-  }
-}

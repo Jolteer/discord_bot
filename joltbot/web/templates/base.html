@@ -1,133 +1,108 @@
+{% import "_icons.html" as i %}
 <!doctype html>
-<html lang="en" class="h-full">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}JoltBot{% endblock %}</title>
+  <title>{% block title %}JoltBot · Verification tickets for Discord{% endblock %}</title>
+  {% set site_url = request.app.state.config.public_base_url %}
+  {% set site_description = "New members apply through a short form and your staff accept or deny them in a private ticket. Set up from your browser." %}
+  <meta name="description" content="{{ site_description }}">
+  <meta name="theme-color" content="#0b0d12">
+  {% block robots %}{% endblock %}
+  {# How a link to this site looks when it is shared, for example in Discord. #}
+  <meta property="og:site_name" content="JoltBot">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="{{ site_url }}/">
+  <meta property="og:title" content="JoltBot · Verification tickets for Discord">
+  <meta property="og:description" content="{{ site_description }}">
+  <meta property="og:image" content="{{ site_url }}/static/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="JoltBot: verification tickets for your Discord server">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="preload" href="/static/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/bricolage-grotesque-latin.woff2" as="font" type="font/woff2" crossorigin>
   {% if css_built %}
     <link rel="stylesheet" href="/static/app.css">
   {% else %}
-    {# Development fallback until `app.css` is built (see README → "Building the CSS"). #}
+    {# Development fallback until `app.css` is built (see README → "Frontend files").
+       It includes the same design system file the real build uses. #}
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
     <style type="text/tailwindcss">
-      @theme {
-        --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        --color-jb-bg: #0f1115;
-        --color-jb-surface: #16181d;
-        --color-jb-surface-2: #1c1f26;
-        --color-jb-elevated: #22252d;
-        --color-jb-border: rgb(255 255 255 / 0.06);
-        --color-jb-border-strong: rgb(255 255 255 / 0.1);
-        --color-jb-muted: #9ba3af;
-        --color-jb-subtle: #6b7280;
-        --color-jb-text: #e8eaed;
-        --color-jb-accent: #5865f2;
-        --color-jb-accent-hover: #4752c4;
-        --color-jb-accent-soft: rgb(88 101 242 / 0.14);
-        --shadow-jb: 0 1px 2px rgb(0 0 0 / 0.35);
-        --shadow-jb-md: 0 4px 16px rgb(0 0 0 / 0.35);
-      }
-      @layer base {
-        html { color-scheme: dark; }
-        body { font-size: 15px; line-height: 1.5; }
-        a:focus-visible, button:focus-visible, input:focus-visible,
-        select:focus-visible, textarea:focus-visible, summary:focus-visible {
-          outline: 2px solid var(--color-jb-accent);
-          outline-offset: 2px;
-        }
-      }
-      @layer components {
-        .jb-container { @apply mx-auto w-full max-w-[1100px] px-4; }
-        .jb-card { @apply rounded-[10px] border border-jb-border bg-jb-surface shadow-jb; }
-        .jb-btn-primary { @apply inline-flex items-center justify-center gap-2 rounded-[10px] bg-jb-accent px-4 py-2 text-sm font-semibold text-white transition duration-150 hover:bg-jb-accent-hover; }
-        .jb-btn-secondary { @apply inline-flex items-center justify-center gap-2 rounded-[10px] border border-jb-border-strong bg-transparent px-4 py-2 text-sm font-semibold text-jb-text transition duration-150 hover:bg-jb-elevated; }
-        .jb-btn-ghost { @apply inline-flex items-center justify-center gap-2 rounded-[10px] px-4 py-2 text-sm font-semibold text-jb-muted transition duration-150 hover:bg-jb-elevated hover:text-jb-text; }
-        .jb-input { @apply w-full rounded-[10px] border border-jb-border-strong bg-jb-bg px-3 py-2 text-sm text-jb-text transition duration-150 placeholder:text-jb-subtle; }
-        .jb-input:focus { @apply border-jb-accent outline-none ring-2 ring-jb-accent/30; }
-        .jb-nav-link { @apply rounded-lg px-3 py-1.5 text-sm text-jb-muted transition duration-150 hover:bg-jb-elevated hover:text-jb-text; }
-        .jb-nav-link-active { @apply bg-jb-elevated font-semibold text-jb-text; }
-        .jb-code { @apply rounded-md bg-jb-elevated px-1.5 py-0.5 font-mono text-[13px] text-jb-accent; }
-        .jb-section-label { @apply text-xs font-semibold uppercase tracking-wide text-jb-subtle; }
-      }
+{% include "_styles.css" %}
     </style>
   {% endif %}
   {% if htmx_available %}<script src="/static/vendor/htmx.min.js" defer></script>{% endif %}
   <script src="/static/app.js" defer></script>
 </head>
 {# htmx sends this header with every request it makes, so htmx POSTs pass the CSRF check. #}
-<body class="flex min-h-full flex-col bg-jb-bg font-sans text-jb-text antialiased"
+<body class="flex min-h-screen flex-col antialiased"
       {% if csrf_token %}hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'{% endif %}>
-  <header class="sticky top-0 z-40 border-b border-jb-border bg-jb-bg/90 backdrop-blur-md">
-    <div class="jb-container flex h-14 items-center justify-between gap-3">
-      <a href="/" class="flex items-center gap-2 text-base font-bold tracking-tight">
-        <img src="/static/favicon.svg" alt="" class="h-7 w-7" width="28" height="28">
-        <span>Jolt<span class="text-jb-accent">Bot</span></span>
+  <a href="#main" class="jb-skip">Skip to content</a>
+
+  <header class="jb-header">
+    <div class="jb-container {% block container_class %}{% endblock %} flex h-full items-center gap-3">
+      <a href="/" class="flex shrink-0 items-center gap-2.5" aria-label="JoltBot home">
+        <img src="/static/favicon.svg" alt="" class="h-8 w-8" width="32" height="32">
+        <span class="jb-wordmark">JoltBot</span>
       </a>
 
-      <nav id="site-nav" class="hidden items-center gap-1 md:flex" aria-label="Primary">
-        {% if user %}
-          <a href="/servers" class="jb-nav-link">My servers</a>
-          <span class="px-2 text-sm text-jb-subtle">{{ user.username }}</span>
-          <form method="post" action="/logout">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="jb-btn-ghost">Log out</button>
-          </form>
-        {% else %}
-          <a href="/login" class="jb-btn-primary">Login with Discord</a>
-        {% endif %}
+      <nav class="ml-4 hidden items-center gap-1 md:flex" aria-label="Primary">
+        {% block nav_links %}{% endblock %}
       </nav>
 
-      <button type="button"
-              id="nav-toggle"
-              class="jb-btn-ghost -mr-2 md:hidden"
-              aria-controls="mobile-nav"
-              aria-expanded="false"
-              aria-label="Open menu">
-        <svg id="nav-icon-open" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M4 7h16M4 12h16M4 17h16"/>
-        </svg>
-        <svg id="nav-icon-close" class="hidden h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M6 6l12 12M18 6L6 18"/>
-        </svg>
-      </button>
-    </div>
-
-    <div id="mobile-nav" class="hidden border-t border-jb-border bg-jb-bg md:hidden" hidden>
-      <nav class="jb-container flex flex-col gap-1 py-3" aria-label="Mobile">
+      <div class="ml-auto flex items-center gap-2">
         {% if user %}
-          <a href="/servers" class="jb-nav-link">My servers</a>
-          <div class="px-3 py-1.5 text-sm text-jb-subtle">{{ user.username }}</div>
-          <form method="post" action="/logout" class="px-1">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="jb-btn-ghost w-full justify-start">Log out</button>
-          </form>
+          <a href="/servers" class="jb-toplink hidden sm:block">My servers</a>
+          <details class="jb-menu" data-menu>
+            <summary class="flex items-center gap-2 rounded-full p-1 transition-colors duration-150 hover:bg-jb-raised sm:pr-2.5"
+                     aria-label="Account menu for {{ user.username }}">
+              {{ i.avatar("https://cdn.discordapp.com/avatars/" ~ user.user_id ~ "/" ~ user.avatar ~ ".png?size=64" if user.avatar else none,
+                          user.username[:1] | upper, "h-8 w-8 text-sm") }}
+              <span class="hidden max-w-36 truncate text-sm font-medium sm:block">{{ user.username }}</span>
+              {{ i.icon("chevron-down", "jb-chevron hidden h-4 w-4 text-jb-subtle sm:block") }}
+            </summary>
+            <div class="jb-menu-panel right-0">
+              <p class="px-2.5 pb-1.5 pt-2 text-xs text-jb-subtle">Signed in as
+                <span class="block truncate text-sm font-semibold text-jb-text">{{ user.username }}</span>
+              </p>
+              <a href="/servers" class="jb-menu-item">{{ i.icon("server", "h-4 w-4 text-jb-subtle") }} My servers</a>
+              <form method="post" action="/logout">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="jb-menu-item">{{ i.icon("logout", "h-4 w-4 text-jb-subtle") }} Log out</button>
+              </form>
+            </div>
+          </details>
         {% else %}
-          <a href="/login" class="jb-btn-primary mx-1">Login with Discord</a>
+          {% block header_actions %}
+            <a href="/login" class="jb-btn jb-btn-secondary">Login with Discord</a>
+          {% endblock %}
         {% endif %}
-      </nav>
+      </div>
     </div>
   </header>
 
-  <main class="jb-container flex-1 py-6 {% block main_class %}{% endblock %}">
+  <main id="main" class="flex-1 {% block main_class %}jb-container py-8 sm:py-10{% endblock %}">
     {% block content %}{% endblock %}
   </main>
 
-  <footer class="mt-auto border-t border-jb-border">
-    <div class="jb-container flex flex-wrap items-center justify-between gap-3 py-4 text-xs text-jb-subtle">
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <a href="/" class="transition duration-150 hover:text-jb-text">Home</a>
+  {% block footer %}
+  <footer class="border-t border-jb-line">
+    <div class="jb-container {{ self.container_class() }} flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-6 text-xs text-jb-subtle">
+      <p>&copy; JoltBot. Not affiliated with Discord Inc.</p>
+      <nav class="flex flex-wrap items-center gap-x-5 gap-y-1" aria-label="Footer">
+        <a href="/" class="transition-colors duration-150 hover:text-jb-text">Home</a>
         {% if user %}
-          <a href="/servers" class="transition duration-150 hover:text-jb-text">Servers</a>
+          <a href="/servers" class="transition-colors duration-150 hover:text-jb-text">My servers</a>
         {% else %}
-          <a href="/login" class="transition duration-150 hover:text-jb-text">Login</a>
+          <a href="/login" class="transition-colors duration-150 hover:text-jb-text">Login</a>
         {% endif %}
-      </div>
-      <p>&copy; JoltBot</p>
+      </nav>
     </div>
   </footer>
+  {% endblock %}
 </body>
 </html>
