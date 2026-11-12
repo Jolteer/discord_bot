@@ -179,6 +179,7 @@ All settings come from environment variables, or from a `.env` file in the proje
 | `FORWARDED_ALLOW_IPS` | | `127.0.0.1` | Proxies whose `X-Forwarded-*` headers are trusted. Docker Compose sets `*` (see the comment there). |
 | `LOG_LEVEL` | | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`. |
 | `LOG_DIR` | | `logs` | Folder for rotating log files. Empty = console only (Docker sets this). |
+| `LOG_FORMAT` | | `text` | `text` for readable lines, `json` for one JSON object per line (`ts`, `level`, `logger`, `message`, plus fields such as `guild_id`). |
 | `DOMAIN` | Caddy | | Docker Compose + Caddy only: the domain to get an HTTPS certificate for. |
 
 If a required variable is missing, the process stops at startup and names it. Logs never contain the token, the secrets or the one-time login code.
@@ -455,7 +456,7 @@ docker compose --profile proxy up -d --build   # rebuilds, runs new migrations, 
 
 Migrations run automatically (the `migrate` service). To change the database schema, see section 11.
 
-**Logs:** `docker compose logs -f bot` / `web` / `migrate`. Docker keeps them per container.
+**Logs:** `docker compose logs -f bot` / `web` / `migrate`. Docker keeps them per container, capped at 5 files of 10 MB each (`x-logging` in `docker-compose.yml`), so they can't fill the disk. The cap applies to containers created after it was added: run `docker compose up -d --force-recreate` once. Set `LOG_FORMAT=json` in `.env` for machine-readable lines.
 
 **Backups:** the `joltbot-data` volume holds all settings and ticket state. A safe copy while JoltBot keeps running:
 

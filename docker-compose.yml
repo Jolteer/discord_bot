@@ -10,10 +10,19 @@
 
 name: joltbot
 
+# Docker keeps every container's console output on disk, without limit by default.
+# Cap it at 5 files of 10 MB per container so logs can never fill the server's disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 x-app: &app
   build: .
   image: joltbot:latest
   env_file: .env
+  logging: *logging
   volumes:
     - joltbot-data:/app/data
 
@@ -69,6 +78,7 @@ services:
   caddy:
     image: caddy:2.8.4-alpine
     profiles: ["proxy"]
+    logging: *logging
     environment:
       DOMAIN: ${DOMAIN:-localhost}
     ports:

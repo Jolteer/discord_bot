@@ -1,13 +1,15 @@
 """Deployment plumbing: /health, settings from env vars, logging, and the CSP switch."""
 
+import json
 import logging
+from datetime import datetime
 
 import httpx
 import pytest
 from pydantic import ValidationError
 
 from joltbot.core.config import AppConfig
-from joltbot.core.logsetup import HideLoginCode, setup_logging
+from joltbot.core.logsetup import HideLoginCode, JsonFormatter, setup_logging
 from joltbot.web import app as app_module
 from joltbot.web.app import TAILWIND_CDN, create_app
 
@@ -80,7 +82,14 @@ def test_defaults_match_local_development(monkeypatch):
     assert (config.host, config.port, config.log_level, config.log_dir) == ("127.0.0.1", 8000, "INFO", "logs")
 
 
-@pytest.mark.parametrize("name,value", [("PORT", "0"), ("PORT", "http"), ("LOG_LEVEL", "LOUD")])
+def test_log_format_defaults_to_text_and_ignores_case(monkeypatch):
+    monkeypatch.delenv("LOG_FORMAT", raising=False)
+    assert AppConfig(_env_file=None).log_format == "text"
+    monkeypatch.setenv("LOG_FORMAT", "JSON")
+    assert AppConfig(_env_file=None).log_format == "json"
+
+
+@pytest.mark.parametrize("name,value", [("PORT", "0"), ("PORT", "http"), ("LOG_LEVEL", "LOUD"), ("LOG_FORMAT", "xml")])
 def test_bad_values_are_rejected(monkeypatch, name, value):
     monkeypatch.setenv(name, value)
     with pytest.raises(ValidationError):
@@ -145,3 +154,47 @@ def test_other_urls_are_logged_unchanged():
     )
     HideLoginCode().filter(record)
     assert "/servers?page=2" in record.getMessage()
+
+
+def test_text_logs_look_the_same_as_before(tmp_path, restore_root_logger):
+    setup_logging("bot", "INFO", str(tmp_path / "logs"))
+    logging.getLogger("joltbot.test").warning("Guild %s: %s", 5, "something", extra={"guild_id": 5})
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    line = (tmp_path / "logs" / "bot.log").read_text(encoding="utf-8").strip()
+    assert line.endswith("WARNING  joltbot.test: Guild 5: something")
+
+
+def test_json_logs_are_one_object_per_line_with_extra_fields(tmp_path, restore_root_logger):
+    setup_logging("bot", "INFO", str(tmp_path / "logs"), "json")
+    log = logging.getLogger("joltbot.test")
+    log.warning(
+        "Guild %s: %s", 5, "something\nwith a line break", extra={"guild_id": 5, "issue": "tickets.log_channel"}
+    )
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        log.exception("It failed")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
+    lines = (tmp_path / "logs" / "bot.log").read_text(encoding="utf-8").splitlines()
+    first, second = (json.loads(line) for line in lines)  # exactly two lines, each valid JSON
+    assert first["level"] == "WARNING" and first["logger"] == "joltbot.test"
+    assert first["message"] == "Guild 5: something\nwith a line break"
+    assert first["guild_id"] == 5 and first["issue"] == "tickets.log_channel"
+    assert datetime.fromisoformat(first["ts"]).tzinfo is not None
+    assert second["level"] == "ERROR" and "ValueError: boom" in second["exception"]
+    assert "exception" not in first
+
+
+def test_json_logs_survive_values_json_cannot_encode():
+    record = logging.LogRecord("joltbot.test", logging.INFO, __file__, 1, "hi", (), None)
+    record.thing = object()
+    assert json.loads(JsonFormatter().format(record))["thing"].startswith("<object object")
+
+
+def test_json_logs_drop_uvicorns_colour_codes():
+    record = logging.LogRecord("uvicorn.error", logging.INFO, __file__, 1, "Uvicorn running", (), None)
+    record.color_message = "Uvicorn running \x1b[1m...\x1b[0m"
+    assert "color_message" not in json.loads(JsonFormatter().format(record))

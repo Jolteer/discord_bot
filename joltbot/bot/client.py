@@ -213,7 +213,7 @@ class JoltBot(commands.Bot):
             key: Stable issue key (e.g. ``tickets.pending_role``); upserts by key.
             message: Human-readable text shown on the overview page.
         """
-        log.warning("Guild %s: %s", guild_id, message)
+        log.warning("Guild %s: %s", guild_id, message, extra={"guild_id": guild_id, "issue": key})
         try:
             async with self.db.session() as session, session.begin():
                 await record_issue(session, guild_id, key, message)

@@ -88,7 +88,7 @@ def main() -> None:
         3 — Missing env / schema / privileged intents (``EXIT_BAD_SETUP``).
     """
     config = get_config()
-    setup_logging("bot", config.log_level, config.log_dir)
+    setup_logging("bot", config.log_level, config.log_dir, config.log_format)
     if missing := config.missing("discord_token"):
         log.critical("Missing in .env: %s (see .env.example).", ", ".join(missing))
         sys.exit(EXIT_BAD_SETUP)

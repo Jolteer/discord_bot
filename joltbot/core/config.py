@@ -13,6 +13,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+LogFormat = Literal["text", "json"]
 
 
 class AppConfig(BaseSettings):
@@ -37,6 +38,8 @@ class AppConfig(BaseSettings):
     log_level: LogLevel = "INFO"
     # Folder for rotating log files. Empty = console only (Docker collects the console output).
     log_dir: str = "logs"
+    # "text" = readable lines; "json" = one JSON object per line, for log tools.
+    log_format: LogFormat = "text"
 
     @field_validator("public_base_url")
     @classmethod
@@ -47,6 +50,11 @@ class AppConfig(BaseSettings):
     @classmethod
     def _upper(cls, value: object) -> object:
         return value.strip().upper() if isinstance(value, str) else value
+
+    @field_validator("log_format", mode="before")
+    @classmethod
+    def _lower(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
 
     @property
     def oauth_redirect_uri(self) -> str:

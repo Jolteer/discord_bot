@@ -1,14 +1,21 @@
 """Logging for both processes: the console (seen by Docker / journalctl), plus an
-optional rotating file in LOG_DIR."""
+optional rotating file in LOG_DIR. Lines are plain text by default, or one JSON
+object per line with LOG_FORMAT=json."""
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 CALLBACK_PATH = "/auth/callback"
+
+# Attributes every LogRecord has. Anything else on a record came from `extra=`.
+# color_message is uvicorn's copy of the message with terminal colour codes; never useful here.
+_STANDARD_ATTRIBUTES = frozenset(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "color_message"}
 
 
 class HideLoginCode(logging.Filter):
@@ -27,9 +34,44 @@ class HideLoginCode(logging.Filter):
         return True
 
 
-def setup_logging(process_name: str, level: str = "INFO", log_dir: str = "logs") -> None:
-    """Send logs to stdout, and also to <log_dir>/<process_name>.log unless log_dir is empty."""
-    fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S")
+class JsonFormatter(logging.Formatter):
+    """One JSON object per line, for log tools that filter by field.
+
+    Always has ``ts`` (UTC, ISO 8601), ``level``, ``logger`` and ``message``.
+    Fields passed with ``extra=`` (e.g. ``guild_id``) are added as they are, and
+    a traceback goes in ``exception``. Values JSON can't encode become strings,
+    so a log call can never fail because of what it was given.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        data: dict[str, object] = {
+            "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(timespec="milliseconds"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        for key, value in record.__dict__.items():
+            if key not in _STANDARD_ATTRIBUTES and not key.startswith("_"):
+                data[key] = value
+        if record.exc_info:
+            data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(data, default=str, ensure_ascii=False)
+
+
+def setup_logging(process_name: str, level: str = "INFO", log_dir: str = "logs", log_format: str = "text") -> None:
+    """Send logs to stdout, and also to <log_dir>/<process_name>.log unless log_dir is empty.
+
+    Args:
+        process_name: ``"bot"`` or ``"web"``; names the log file.
+        level: Minimum level to log.
+        log_dir: Folder for the rotating log file. Empty = console only.
+        log_format: ``"text"`` (readable lines) or ``"json"`` (see ``JsonFormatter``).
+    """
+    fmt: logging.Formatter
+    if log_format == "json":
+        fmt = JsonFormatter()
+    else:
+        fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S")
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(fmt)
     handlers: list[logging.Handler] = [console]
