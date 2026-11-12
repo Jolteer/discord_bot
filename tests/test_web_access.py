@@ -489,3 +489,73 @@ async def test_overview_has_no_warning_while_the_bot_is_online(db, alice):
     async with db.session() as session, session.begin():
         await write_heartbeat(session)
     assert "offline" not in (await alice.get(f"/servers/{GUILD_A}")).text
+
+
+# --------------------------------------------------------------------------- notices channel (General page)
+
+
+def _general_form(csrf, **fields):
+    return {"csrf_token": csrf, "embed_color": "#123456", "version_general": "1", "version_tickets": "1", **fields}
+
+
+async def _general(db, guild_id=GUILD_A):
+    async with db.session() as session:
+        return (await load_module(session, guild_id, "general")).config
+
+
+async def test_general_page_offers_this_servers_channels(alice):
+    page = (await alice.get(f"/servers/{GUILD_A}/general")).text
+    assert 'name="notice_channel_id"' in page
+    assert f'value="{TEXT[GUILD_A]}"' in page and f'value="{TEXT[GUILD_B]}"' not in page
+
+
+async def test_picking_and_clearing_the_notices_channel(db, alice):
+    csrf = await csrf_of(alice)
+    r = await alice.post(f"/servers/{GUILD_A}/general", data=_general_form(csrf, notice_channel_id=str(TEXT[GUILD_A])))
+    assert r.status_code == 303
+    assert (await _general(db)).notice_channel_id == TEXT[GUILD_A]
+    assert f'value="{TEXT[GUILD_A]}" selected' in (await alice.get(f"/servers/{GUILD_A}/general")).text
+
+    r = await alice.post(
+        f"/servers/{GUILD_A}/general", data=_general_form(csrf, notice_channel_id="", version_general="2")
+    )
+    assert r.status_code == 303
+    assert (await _general(db)).notice_channel_id is None
+
+
+@pytest.mark.parametrize("bad", [str(TEXT[GUILD_B]), "999999", "not-a-number"])
+async def test_a_channel_from_another_server_is_refused(db, alice, bad):
+    csrf = await csrf_of(alice)
+    r = await alice.post(f"/servers/{GUILD_A}/general", data=_general_form(csrf, notice_channel_id=bad))
+    assert r.status_code == 400 and "Notices channel" in html.unescape(r.text)
+    assert (await _general(db)).notice_channel_id is None
+    assert (await _general(db)).embed_color != "#123456"  # nothing was saved
+
+
+async def test_general_page_still_works_when_discord_is_down(db, alice, fake):
+    csrf = await csrf_of(alice)
+    await alice.post(f"/servers/{GUILD_A}/general", data=_general_form(csrf, notice_channel_id=str(TEXT[GUILD_A])))
+
+    async def down(guild_id, *, refresh=False):
+        raise DiscordError("Discord is down", 503)
+
+    fake.guild_data = down
+    page = await alice.get(f"/servers/{GUILD_A}/general")
+    assert page.status_code == 200 and "Couldn't load this server's channels" in html.unescape(page.text)
+
+    # Saving other settings keeps the channel that was already picked...
+    r = await alice.post(
+        f"/servers/{GUILD_A}/general",
+        data=_general_form(csrf, embed_color="#abcdef", notice_channel_id=str(TEXT[GUILD_A]), version_general="2"),
+    )
+    assert r.status_code == 303
+    config = await _general(db)
+    assert (config.embed_color, config.notice_channel_id) == ("#abcdef", TEXT[GUILD_A])
+
+    # ...but a different channel can't be checked against the server, so it's refused.
+    r = await alice.post(
+        f"/servers/{GUILD_A}/general",
+        data=_general_form(csrf, notice_channel_id="6101", version_general="3"),
+    )
+    assert r.status_code == 400 and "Try again in a minute" in html.unescape(r.text)
+    assert (await _general(db)).notice_channel_id == TEXT[GUILD_A]

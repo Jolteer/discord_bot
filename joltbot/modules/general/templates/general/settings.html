@@ -21,6 +21,16 @@
     </label>
   {% endcall %}
 
+  {% call f.section("Bot notices", "When JoltBot runs into a problem in this server (it can't give a role, can't post a transcript, a channel was deleted), it shows a warning on this dashboard. It can also tell you in Discord.") %}
+    {% if text_channels is none %}
+      <input type="hidden" name="notice_channel_id" value="{{ notice_channel_id }}">
+      <p class="text-sm text-amber-200">Couldn't load this server's channels from Discord right now, so the notices channel can't be changed. Everything else on this page can still be saved.</p>
+    {% else %}
+      {{ f.channel_select("notice_channel_id", "Notices channel (optional)", text_channels, notice_channel_id,
+                          "Each new problem is posted here once, without pinging anyone. Pick a staff-only channel where JoltBot can View Channel and Send Messages.", "(none: dashboard only)") }}
+    {% endif %}
+  {% endcall %}
+
   {% call f.section("Commands") %}
     <p class="text-sm text-jb-muted">JoltBot uses slash commands only. Type <code class="jb-code">/tickets</code> in Discord to see them.
       By default only members with Manage Server can see them. To let other roles use them, go to

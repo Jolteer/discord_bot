@@ -12,7 +12,7 @@ from .models import Guild, GuildIssue
 from .types import utcnow
 
 
-async def record_issue(session: AsyncSession, guild_id: int, key: str, message: str) -> None:
+async def record_issue(session: AsyncSession, guild_id: int, key: str, message: str) -> bool:
     """Upsert a guild issue by ``(guild_id, key)``, bumping ``count`` on repeats.
 
     Args:
@@ -20,9 +20,14 @@ async def record_issue(session: AsyncSession, guild_id: int, key: str, message: 
         guild_id: Discord guild snowflake.
         key: Stable machine key (e.g. ``tickets.pending_role``).
         message: Latest human-readable text for the dashboard.
+
+    Returns:
+        True if this problem is new for the guild (no open issue with this key).
+        False for a repeat, or when there is no guild row to attach it to. A
+        problem counts as new again after it was cleared or dismissed.
     """
     if await session.get(Guild, guild_id) is None:
-        return  # guild row not created yet; nothing to attach the issue to
+        return False  # guild row not created yet; nothing to attach the issue to
     existing = (
         await session.execute(select(GuildIssue).where(GuildIssue.guild_id == guild_id, GuildIssue.key == key))
     ).scalar_one_or_none()
@@ -34,6 +39,7 @@ async def record_issue(session: AsyncSession, guild_id: int, key: str, message: 
         existing.last_seen = now
         existing.count += 1
     await session.flush()
+    return existing is None
 
 
 async def clear_issue(session: AsyncSession, guild_id: int, key: str) -> None:

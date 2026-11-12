@@ -14,6 +14,7 @@ from discord.ext import commands
 
 from ..core.config import AppConfig
 from ..core.db import Database
+from ..core.guild_settings import load_module
 from ..core.issues import clear_issue, record_issue
 from ..core.models import BotMeta
 from ..modules.registry import MODULES
@@ -27,6 +28,11 @@ log = logging.getLogger(__name__)
 # (registered by KOC Gatekeeper) should be removed, so they don't show up twice.
 CLEAR_GUILD_COMMANDS_KEY = "clear_guild_commands"
 COMMANDS_HASH_KEY = "commands_hash"
+
+# Dashboard warning shown when a server's notices channel is gone or JoltBot can't post in it.
+NOTICE_CHANNEL_ISSUE = "general.notice_channel"
+NOTICE_HEADER = "⚠️ **JoltBot needs attention**\n"
+NOTICE_FOOTER = "\n\nThis is also shown on the JoltBot dashboard and clears itself once it's fixed."
 
 
 class Tree(app_commands.CommandTree):
@@ -217,9 +223,58 @@ class JoltBot(commands.Bot):
         log.warning("Guild %s: %s", guild_id, message, extra={"guild_id": guild_id, "issue": key})
         try:
             async with self.db.session() as session, session.begin():
-                await record_issue(session, guild_id, key, message)
+                is_new = await record_issue(session, guild_id, key, message)
         except Exception:
             log.exception("Couldn't record issue %s for guild %s", key, guild_id)
+            return
+        if is_new:  # repeats of an open problem are counted on the dashboard, not posted again
+            await self._post_notice(guild_id, message)
+
+    async def _post_notice(self, guild_id: int, message: str) -> None:
+        """Post a new problem in the server's notices channel, if an admin picked one.
+
+        Never raises: callers are in the middle of ticket work and must not be
+        interrupted because a notice couldn't be delivered. If the notices
+        channel itself is unusable, that is recorded as a dashboard warning
+        (``NOTICE_CHANNEL_ISSUE``) and cleared once posting works again. That
+        warning is never posted as a notice, which would loop.
+
+        Args:
+            guild_id: Affected Discord guild.
+            message: The problem text, as shown on the dashboard.
+        """
+        try:
+            guild = self.get_guild(guild_id)
+            if guild is None:
+                return
+            async with self.db.session() as session:
+                general = await load_module(session, guild_id, "general")
+            channel_id = general.config.notice_channel_id
+            if channel_id is None:
+                return
+
+            channel = guild.get_channel(channel_id)
+            problem: str | None = None
+            if not isinstance(channel, discord.TextChannel):
+                problem = "The bot notices channel no longer exists. Pick another on the dashboard (General)."
+            else:
+                room = 2000 - len(NOTICE_HEADER) - len(NOTICE_FOOTER)
+                text = NOTICE_HEADER + (message if len(message) <= room else message[: room - 1] + "…") + NOTICE_FOOTER
+                try:
+                    await channel.send(text, allowed_mentions=discord.AllowedMentions.none())
+                except discord.Forbidden:
+                    problem = (
+                        f"I can't post in the bot notices channel #{channel.name}. Give JoltBot View Channel and "
+                        "Send Messages there, or pick another channel on the dashboard (General)."
+                    )
+
+            async with self.db.session() as session, session.begin():
+                if problem is None:
+                    await clear_issue(session, guild_id, NOTICE_CHANNEL_ISSUE)
+                else:
+                    await record_issue(session, guild_id, NOTICE_CHANNEL_ISSUE, problem)
+        except Exception as e:
+            log.warning("Guild %s: couldn't post a notice: %s", guild_id, e, extra={"guild_id": guild_id})
 
     async def resolve_issue(self, guild_id: int, key: str) -> None:
         """Clear a previously recorded guild issue if it still exists.

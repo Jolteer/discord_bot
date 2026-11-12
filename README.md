@@ -19,6 +19,7 @@ JoltBot runs as **two processes** that share one SQLite database:
 
 - **Multi-server bot** with per-guild settings stored in SQLite (no restart to apply dashboard changes)
 - **Web dashboard** — Discord OAuth login, server picker, module settings, audit log, dismissible bot issues
+- **Notices channel** — optionally, each server gets new problems posted once in a channel of its choice
 - **Tickets & verification**
   1. New members click **Open Application** and answer the server's own questions (up to 5)
   2. A private ticket channel opens for them
@@ -289,6 +290,7 @@ The image:
    - Optionally pick a pending role, extra role choices, your own form questions and messages.
    - Tick **Ticket module is ON** and save. The page warns you about missing permissions or role-order problems.
 4. **In Discord, run `/tickets panel`** to post and pin the panel, then **`/tickets diagnostics`** for a full check.
+   - Optional: on **Dashboard → General**, pick a **Notices channel**. When JoltBot hits a problem in your server (it can't give a role, can't post a transcript, a channel was deleted), it posts it there once, without pinging anyone. The same problems always show as warnings on the dashboard overview.
 5. **Already have members?** Run **`/tickets grant-existing`** once. It gives the accepted role to everyone already there, so locking the server (next step) doesn't lock them out.
 6. **Optional: lock new members to the panel channel.**
    - Turn off **View Channels** for @everyone and turn it on for the accepted role.
@@ -509,6 +511,7 @@ Put both lines in a small script and run it nightly with cron. Each server's log
 | New roles/channels don't show up in the dashboard | Click **↻ Refresh roles & channels** (it caches for 60 seconds). |
 | "My highest role … is not above …" | Drag JoltBot's role higher (section 6, step 2). |
 | Panel says applications aren't set up | The module is off or setup isn't finished. Check the dashboard. |
+| No message in the notices channel | JoltBot needs View Channel and Send Messages there; the dashboard overview says so if it can't post. Each problem is posted once and not repeated until it has been fixed or dismissed. |
 | Closed ticket channel not deleted | JoltBot couldn't post to the log channel. The dashboard overview shows why. Fix it, then delete the channel by hand (its transcript is still in it). |
 | Transcript messages are blank | The Message Content intent is off. |
 | `/tickets` commands don't appear | Wait a minute after the first start. Re-invite with the `applications.commands` scope. Members without Manage Server don't see them by default. |

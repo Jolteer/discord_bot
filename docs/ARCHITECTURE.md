@@ -188,7 +188,10 @@ Guild-owned rows use `ON DELETE CASCADE` when a left guild is purged.
   log lines from either process go to a Discord webhook on a background thread,
   de-duplicated and rate-limited.
 - Ticket recovery loop + claim/release.
-- Issues table for admin-visible problems.
+- Issues table for admin-visible problems. `JoltBot.report_issue` also posts each
+  *new* issue once to the guild's notices channel (`general.notice_channel_id`),
+  if an admin picked one. Repeats only bump the count. If that channel is unusable,
+  the issue `general.notice_channel` is recorded for the dashboard and never posted.
 - Bot heartbeat (`core/health.py`, `bot/heartbeat.py`): written to `bot_meta`
   every minute while the gateway connection is up; stale after 3 minutes. Read by
   `/health/bot`, the overview banner and the bot's Docker health check
