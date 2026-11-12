@@ -1,34 +1,76 @@
 {% extends "guild/_layout.html" %}
 {% import "_form.html" as f %}
+{% import "_icons.html" as i %}
+
+{# One editable message: label, help, the text box, and buttons that insert its placeholders.
+   `targets` are the ids of the preview elements that show this text (see app.js). #}
+{% macro message_field(m, targets="", plain=False) %}
+  <div>
+    <label for="msg-{{ m.key }}" class="jb-field-label">{{ m.label }}</label>
+    {% if m.help %}<span class="jb-help mt-0.5">{{ m.help }}</span>{% endif %}
+    {% if m.multiline %}
+      <textarea name="msg_{{ m.key }}" id="msg-{{ m.key }}" rows="4" {% if m.max_length %}maxlength="{{ m.max_length }}"{% endif %}
+                data-preview="{{ targets or 'preview-' ~ m.key }}" {{ 'data-preview-plain' if plain }}
+                class="jb-input jb-input-mono mt-1.5">{{ m.value }}</textarea>
+    {% else %}
+      <input name="msg_{{ m.key }}" value="{{ m.value }}" id="msg-{{ m.key }}" {% if m.max_length %}maxlength="{{ m.max_length }}"{% endif %}
+             data-preview="{{ targets or 'preview-' ~ m.key }}" {{ 'data-preview-plain' if plain }}
+             class="jb-input jb-input-mono mt-1.5">
+    {% endif %}
+    {% if m.placeholders %}
+      <div class="mt-2 flex flex-wrap items-center gap-1.5">
+        <span class="jb-help">Insert:</span>
+        {% for p in m.placeholders %}
+          <button type="button" class="jb-chip" data-insert="{{ '{' ~ p ~ '}' }}" data-insert-into="msg-{{ m.key }}">{{ '{' ~ p ~ '}' }}</button>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+{# A message from JoltBot as Discord shows it. `only_you` adds the "only you can see this" line. #}
+{% macro bot_message(only_you=False) %}
+  <div class="dc-msg">
+    <img src="/static/favicon.svg" alt="" class="dc-avatar" width="40" height="40">
+    <div class="min-w-0">
+      <div class="dc-head"><span class="dc-name">JoltBot</span><span class="dc-app">APP</span><span class="dc-time">Today at 14:02</span></div>
+      {{ caller() }}
+      {% if only_you %}<div class="dc-ephemeral">{{ i.icon("eye", "h-3.5 w-3.5") }} Only you can see this</div>{% endif %}
+    </div>
+  </div>
+{% endmacro %}
+
 {% block page %}
-<div class="flex flex-wrap items-center justify-between gap-3">
-  <h1 class="text-xl font-bold tracking-tight">Tickets &amp; verification</h1>
-  <form method="post" action="/servers/{{ guild.id }}/refresh">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <input type="hidden" name="next" value="/servers/{{ guild.id }}/tickets">
-    <button class="jb-btn-secondary px-3 py-1.5 text-xs" title="Reload roles and channels from Discord">↻ Refresh roles &amp; channels</button>
-  </form>
-</div>
+{% call f.page_head("Tickets & verification", "New members apply through a form; staff accept or deny in a private ticket.") %}
+  {{ f.refresh_button(guild.id, csrf_token, "/servers/" ~ guild.id ~ "/tickets", "Refresh roles & channels") }}
+{% endcall %}
 
-<div class="mt-3 space-y-2">{{ f.messages_box(errors, warnings, issues, saved) }}</div>
+<div class="mt-5 space-y-2">{{ f.messages_box(errors, warnings, issues, saved) }}</div>
 
-<form method="post" action="/servers/{{ guild.id }}/tickets" class="mt-4 space-y-4" data-server-name="{{ guild.name }}">
+<nav class="jb-jump jb-scroll-x mt-6" aria-label="On this page">
+  {% for id, label in [("status", "Status"), ("staff", "Staff"), ("channels", "Channels"), ("roles", "Roles"), ("ping", "Ping"),
+                       ("form", "Form"), ("dropdowns", "Dropdowns"), ("messages", "Messages"), ("behaviour", "Behaviour")] %}
+    <a href="#{{ id }}" data-spy>{{ label }}</a>
+  {% endfor %}
+</nav>
+
+<form method="post" action="/servers/{{ guild.id }}/tickets" class="mt-5 space-y-5" data-server-name="{{ guild.name }}" data-savebar>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="version" value="{{ version }}">
 
-  {% call f.section("Status") %}
-    {{ f.checkbox("enabled", "Ticket module is ON", enabled,
-                  "While off, JoltBot ignores the panel button and doesn't give roles to new members.") }}
-    <p class="text-xs text-jb-muted">After setting up, post the panel in Discord with <code class="jb-code">/tickets panel</code>, then check everything with <code class="jb-code">/tickets diagnostics</code>.</p>
+  {% call f.section("Status", id="status", icon="bolt") %}
+    {{ f.toggle("enabled", "Ticket module is ON", enabled,
+                "While off, JoltBot ignores the panel button and doesn't give roles to new members.") }}
+    <p class="text-sm text-jb-muted">After setting up, post the panel in Discord with <code class="jb-code">/tickets panel</code>, then check everything with <code class="jb-code">/tickets diagnostics</code>.</p>
   {% endcall %}
 
-  {% call f.section("Staff", "Who can accept, deny and close tickets.") %}
+  {% call f.section("Staff", "Who can accept, deny and close tickets.", id="staff", icon="users") %}
     {{ f.role_picker("staff_role_ids", "Staff roles", roles, values.staff_role_ids) }}
     {{ f.checkbox("allow_administrators", "Members with Administrator also count as staff", values.allow_administrators) }}
   {% endcall %}
 
-  {% call f.section("Channels") %}
-    <div class="grid gap-3 sm:grid-cols-2">
+  {% call f.section("Channels", "Where JoltBot posts the panel, opens tickets and keeps its records.", id="channels", icon="hash") %}
+    <div class="grid gap-5 sm:grid-cols-2">
       {{ f.channel_select("panel_channel_id", "Panel channel", text_channels, values.panel_channel_id,
                           "Where the Open Application button is posted.") }}
       {{ f.channel_select("ticket_category_id", "Ticket category", categories, values.ticket_category_id,
@@ -40,51 +82,54 @@
     </div>
   {% endcall %}
 
-  {% call f.section("Roles", "JoltBot's own role must be above every role it gives or removes.") %}
+  {% call f.section("Roles", "JoltBot's own role must be above every role it gives or removes.", id="roles", icon="role") %}
     {{ f.role_picker("accept_role_ids", "Roles given when accepted", roles, values.accept_role_ids,
                      "E.g. Member. Members who already have one of these are told they're verified.", assign=True) }}
-    {{ f.role_select("pending_role_id", "Pending role (optional)", roles, values.pending_role_id,
-                     "Given to everyone who joins and removed on accept, e.g. Unverified.") }}
+    <div class="max-w-md">
+      {{ f.role_select("pending_role_id", "Pending role (optional)", roles, values.pending_role_id,
+                       "Given to everyone who joins and removed on accept, e.g. Unverified.") }}
+    </div>
     {{ f.checkbox("assign_pending_on_startup", "Give the pending role to people who joined while JoltBot was offline",
                   values.assign_pending_on_startup) }}
     <div>
-      <div class="text-sm font-medium">Extra role choices (optional)</div>
-      <p class="text-xs text-jb-muted">Staff can pick one of these when accepting, e.g. a team. Leave a row empty to skip it.</p>
+      <div class="jb-field-label">Extra role choices (optional)</div>
+      <p class="jb-help mt-0.5">Staff can pick one of these when accepting, e.g. a team. Leave a row empty to skip it.</p>
       <div class="mt-2 space-y-2">
         {% for row in extras %}
-          <div class="grid grid-cols-[1fr_1fr_5rem] gap-2">
+          <div class="jb-row grid-cols-[minmax(0,1fr)_5rem] sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_5.5rem]">
             <input name="extra_label_{{ loop.index0 }}" value="{{ row.label }}" placeholder="Label" maxlength="100"
-                   class="jb-input">
-            <select name="extra_role_{{ loop.index0 }}" class="jb-input">
+                   aria-label="Extra role choice {{ loop.index }}: label" class="jb-input col-span-2 sm:col-span-1">
+            <select name="extra_role_{{ loop.index0 }}" aria-label="Extra role choice {{ loop.index }}: role" class="jb-input">
               <option value="">(role)</option>
               {% for r in roles if not r.managed %}
                 <option value="{{ r.id }}" {{ 'selected' if r.id == row.role_id }}>{{ r.name }}</option>
               {% endfor %}
             </select>
             <input name="extra_emoji_{{ loop.index0 }}" value="{{ row.emoji or '' }}" placeholder="Emoji" maxlength="64"
-                   class="jb-input">
+                   aria-label="Extra role choice {{ loop.index }}: emoji" class="jb-input">
           </div>
         {% endfor %}
       </div>
     </div>
   {% endcall %}
 
-  {% call f.section("New-ticket ping") %}
-    {{ f.checkbox("ping_enabled", "Ping staff when a ticket opens", values.ping_enabled) }}
+  {% call f.section("New-ticket ping", "Let your staff know the moment an application comes in.", id="ping", icon="bell") %}
+    {{ f.toggle("ping_enabled", "Ping staff when a ticket opens", values.ping_enabled) }}
     {{ f.role_picker("ping_role_ids", "Ping these roles instead of the staff roles (optional)", roles, values.ping_role_ids,
                      "Leave empty to ping the staff roles. Ping roles can see tickets but can't use the staff buttons.") }}
   {% endcall %}
 
-  {% call f.section("Application form", "Up to 5 questions. Leave a question's text empty to remove it.") %}
+  {% call f.section("Application form", "Up to 5 questions. Leave a question's text empty to remove it.", id="form", icon="list") %}
     {% for q in questions %}
-      <div class="rounded-[10px] border border-jb-border p-3">
-        <div class="grid gap-2 sm:grid-cols-2">
+      <div class="jb-subcard">
+        <p class="jb-label-caps">Question {{ loop.index }}</p>
+        <div class="mt-2 grid gap-2 sm:grid-cols-2">
           <input name="q_label_{{ loop.index0 }}" value="{{ q.label }}" placeholder="Question {{ loop.index }}" maxlength="45"
-                 class="jb-input">
+                 aria-label="Question {{ loop.index }}: text" class="jb-input">
           <input name="q_placeholder_{{ loop.index0 }}" value="{{ q.placeholder }}" placeholder="Hint text (optional)" maxlength="100"
-                 class="jb-input">
+                 aria-label="Question {{ loop.index }}: hint text" class="jb-input">
         </div>
-        <div class="mt-2 flex flex-wrap items-center gap-4 text-sm">
+        <div class="mt-3 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
           {{ f.checkbox("q_required_" ~ loop.index0, "Required", q.required) }}
           {{ f.checkbox("q_long_" ~ loop.index0, "Long answer", q.long) }}
           <label class="flex items-center gap-2">Max length
@@ -97,75 +142,163 @@
                   values.require_attachment) }}
   {% endcall %}
 
-  {% call f.section("Dropdown questions (optional)", "Applicants answer these by picking from a list, before the form. An option can give a role when the ticket is accepted. Up to 4 questions. Clear a question's name to remove it.") %}
+  {% call f.section("Dropdown questions (optional)", "Applicants answer these by picking from a list, before the form. An option can give a role when the ticket is accepted. Up to 4 questions. Clear a question's name to remove it.", id="dropdowns", icon="chevron-down") %}
     {% for q in choices %}
       {% set qi = loop.index0 %}
-      <div class="rounded-[10px] border border-jb-border p-3">
-        <div class="flex flex-wrap items-center gap-4">
+      <div class="jb-subcard">
+        <p class="jb-label-caps">Dropdown {{ loop.index }}</p>
+        <div class="mt-2 flex flex-wrap items-center gap-x-5 gap-y-3">
           <input name="c_label_{{ qi }}" value="{{ q.label }}" placeholder="Question {{ loop.index }}, e.g. Team" maxlength="45"
-                 class="jb-input max-w-sm">
+                 aria-label="Dropdown {{ loop.index }}: question" class="jb-input max-w-sm">
           {{ f.checkbox("c_required_" ~ qi, "Required", q.required) }}
         </div>
-        <div class="mt-2 space-y-2">
+        <div class="mt-3 space-y-2">
           {% for opt in q.options %}
-            <div class="grid grid-cols-[1fr_1fr_7rem_1.5rem] items-center gap-2">
+            <div class="jb-row grid-cols-[minmax(0,1fr)_5rem_1.5rem] sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_6.5rem_1.5rem]">
               <input name="c_opt_label_{{ qi }}_{{ loop.index0 }}" value="{{ opt.label }}" placeholder="Option {{ loop.index }}" maxlength="100"
-                     class="jb-input">
-              <select name="c_opt_role_{{ qi }}_{{ loop.index0 }}" class="jb-input">
+                     aria-label="Dropdown {{ qi + 1 }}, option {{ loop.index }}: label" class="jb-input col-span-3 sm:col-span-1">
+              <select name="c_opt_role_{{ qi }}_{{ loop.index0 }}" aria-label="Dropdown {{ qi + 1 }}, option {{ loop.index }}: role given" class="jb-input">
                 <option value="">(no role)</option>
                 {% for r in roles if not r.managed %}
                   <option value="{{ r.id }}" {{ 'selected' if r.id == opt.role_id }}>{{ r.name }}{{ ' (above JoltBot)' if not r.assignable }}</option>
                 {% endfor %}
               </select>
               <input name="c_opt_emoji_{{ qi }}_{{ loop.index0 }}" value="{{ opt.emoji or '' }}" placeholder="Icon" maxlength="64"
-                     class="jb-input">
+                     aria-label="Dropdown {{ qi + 1 }}, option {{ loop.index }}: icon" class="jb-input">
               {% if opt.emoji_url %}<img src="{{ opt.emoji_url }}" alt="" class="h-6 w-6" width="24" height="24">{% else %}<span></span>{% endif %}
             </div>
           {% endfor %}
         </div>
       </div>
     {% endfor %}
-    <p class="text-xs text-jb-muted">Each question needs at least 2 options. Save to get more empty rows (up to 10 options per question). Roles are given together with the roles above when staff accept the ticket.</p>
-    <p class="text-xs text-jb-muted"><strong>Icon</strong> (optional): type the name of one of this server's emojis, for example <code class="jb-code">infantry</code>, or paste a normal emoji. After saving, the icon shows next to the box.</p>
+    <p class="jb-help">Each question needs at least 2 options. Save to get more empty rows (up to 10 options per question). Roles are given together with the roles above when staff accept the ticket.</p>
+    <p class="jb-help"><strong>Icon</strong> (optional): type the name of one of this server's emojis, for example <code class="jb-code">infantry</code>, or paste a normal emoji. After saving, the icon shows next to the box.</p>
   {% endcall %}
 
-  {% call f.section("Messages", "Placeholders like {user} and {server} are filled in automatically. The preview updates as you type.") %}
-    {% for m in messages %}
-      <div class="grid gap-3 lg:grid-cols-2">
-        <label class="block">
-          <span class="text-sm font-medium">{{ m.label }}</span>
-          <span class="block text-xs text-jb-muted">{{ m.help }}{% if m.placeholders %} Placeholders:
-            {% for p in m.placeholders %}<code class="jb-code">{{ '{' ~ p ~ '}' }}</code>{{ ', ' if not loop.last }}{% endfor %}{% endif %}</span>
-          {% if m.multiline %}
-            <textarea name="msg_{{ m.key }}" rows="4" {% if m.max_length %}maxlength="{{ m.max_length }}"{% endif %}
-                      data-preview="preview-{{ m.key }}"
-                      class="jb-input mt-1 font-mono">{{ m.value }}</textarea>
-          {% else %}
-            <input name="msg_{{ m.key }}" value="{{ m.value }}" {% if m.max_length %}maxlength="{{ m.max_length }}"{% endif %}
-                   data-preview="preview-{{ m.key }}"
-                   class="jb-input mt-1 font-mono">
-          {% endif %}
-        </label>
-        <div>
-          <span class="jb-section-label">Preview</span>
-          <div id="preview-{{ m.key }}" class="mt-1 min-h-10 whitespace-pre-wrap break-words rounded-[10px] border-l-4 border-jb-accent bg-[#2b2d31] px-3 py-2 text-sm text-jb-text"></div>
+  {% call f.section("Messages", "Placeholders like {user} and {server} are filled in automatically. Each preview updates as you type and shows the message the way Discord will.", id="messages", icon="message") %}
+    {% set by_key = {} %}
+    {% for m in messages %}{% set _ = by_key.update({m.key: m}) %}{% endfor %}
+    {# Which messages are edited together, and which preview they get. A message that is
+       not listed here still shows up, under "Other messages" with a plain preview. #}
+    {% set groups = [
+      ("The application panel", "Posted in your panel channel with /tickets panel.", "panel", ["panel_title", "panel_description", "panel_button_label"]),
+      ("The application form", "The pop-up an applicant fills in.", "form", ["form_title"]),
+      ("When a ticket opens", "A private reply to the applicant, then the first message in their new ticket.", "opened", ["ticket_opened", "ticket_intro"]),
+      ("When someone is accepted", "Sent to the member as a direct message.", "accepted", ["welcome_dm"]),
+      ("When someone is denied", "Staff type a reason; the member gets it as a direct message.", "denied", ["deny_reason_hint", "deny_dm", "deny_dm_kept_suffix", "deny_dm_kicked_suffix"]),
+      ("Short replies", "Shown only to the person who clicked.", "replies", ["not_staff", "already_verified"]),
+    ] %}
+    {% set shown_as_typed = ["panel_button_label", "form_title", "deny_reason_hint"] %}
+    {% set targets = {"deny_dm": "preview-deny_dm-kept preview-deny_dm-kicked"} %}
+    {% set grouped = [] %}
+
+    {% for title, lead, kind, keys in groups %}
+      {% set fields = [] %}
+      {% for key in keys if key in by_key %}{% set _ = fields.append(by_key[key]) %}{% set _ = grouped.append(key) %}{% endfor %}
+      {% if fields %}
+        <div class="jb-subcard">
+          <h3 class="text-base font-bold">{{ title }}</h3>
+          <p class="jb-help mt-0.5">{{ lead }}</p>
+          <div class="mt-4 grid gap-5 xl:grid-cols-2">
+            <div class="space-y-4">
+              {% for m in fields %}{{ message_field(m, targets.get(m.key, ""), m.key in shown_as_typed) }}{% endfor %}
+            </div>
+            <div class="min-w-0 xl:sticky xl:top-36 xl:self-start" aria-label="Preview of: {{ title }}" role="group">
+              <p class="jb-label-caps mb-2">Preview</p>
+              {% if kind == "panel" %}
+                <div class="dc"><div class="dc-body">
+                  {% call bot_message() %}
+                    <div class="dc-embed">
+                      <div class="dc-embed-title" id="preview-panel_title"></div>
+                      <div class="dc-text" id="preview-panel_description"></div>
+                      <div class="dc-embed-footer">One application per person at a time.</div>
+                    </div>
+                    <div class="dc-actions"><span class="dc-btn dc-btn-green">📝 <span id="preview-panel_button_label"></span></span></div>
+                  {% endcall %}
+                </div></div>
+              {% elif kind == "form" %}
+                <div class="dc bg-dc-deep p-4"><div class="dc-modal">
+                  <div class="dc-modal-title" id="preview-form_title"></div>
+                  {% for q in questions if q.label %}
+                    <div class="dc-modal-label">{{ q.label }}{% if q.required %} <span class="text-dc-red">*</span>{% endif %}</div>
+                    <div class="dc-modal-input {{ 'min-h-16' if q.long }}">{{ q.placeholder }}</div>
+                  {% endfor %}
+                  <div class="dc-actions justify-end"><span class="dc-btn">Cancel</span><span class="dc-btn dc-btn-blurple">Submit</span></div>
+                </div></div>
+              {% elif kind == "opened" %}
+                <div class="dc"><div class="dc-body">
+                  {% call bot_message(only_you=True) %}<div class="dc-text" id="preview-ticket_opened"></div>{% endcall %}
+                </div></div>
+                <div class="dc mt-3">
+                  <div class="dc-bar">{{ i.icon("hash", "h-5 w-5") }} ticket-newmember</div>
+                  <div class="dc-body">
+                    {% call bot_message() %}<div class="dc-text" id="preview-ticket_intro"></div>{% endcall %}
+                  </div>
+                </div>
+              {% elif kind == "accepted" %}
+                <div class="dc"><div class="dc-body">
+                  {% call bot_message() %}
+                    <div class="dc-embed" style="--dc-bar: #2ecc71"><div class="dc-text" id="preview-welcome_dm"></div></div>
+                  {% endcall %}
+                </div></div>
+              {% elif kind == "denied" %}
+                <div class="dc bg-dc-deep p-4"><div class="dc-modal">
+                  <div class="dc-modal-title">Deny application</div>
+                  <div class="dc-modal-label">Reason (sent to the applicant)</div>
+                  <div class="dc-modal-input min-h-16" id="preview-deny_reason_hint"></div>
+                </div></div>
+                <div class="dc mt-3"><div class="dc-body">
+                  {% call bot_message() %}
+                    <div class="dc-embed-footer mt-1">If they stay in the server</div>
+                    <div class="dc-embed" style="--dc-bar: #e74c3c"><div class="dc-text"><span id="preview-deny_dm-kept"></span><span id="preview-deny_dm_kept_suffix"></span></div></div>
+                    <div class="dc-embed-footer mt-3">If they are kicked</div>
+                    <div class="dc-embed" style="--dc-bar: #e74c3c"><div class="dc-text"><span id="preview-deny_dm-kicked"></span><span id="preview-deny_dm_kicked_suffix"></span></div></div>
+                  {% endcall %}
+                </div></div>
+              {% elif kind == "replies" %}
+                <div class="dc"><div class="dc-body">
+                  {% call bot_message(only_you=True) %}<div class="dc-text" id="preview-not_staff"></div>{% endcall %}
+                  {% call bot_message(only_you=True) %}<div class="dc-text" id="preview-already_verified"></div>{% endcall %}
+                </div></div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      {% endif %}
+    {% endfor %}
+
+    {% set others = [] %}
+    {% for m in messages if m.key not in grouped %}{% set _ = others.append(m) %}{% endfor %}
+    {% if others %}
+      <div class="jb-subcard">
+        <h3 class="text-base font-bold">Other messages</h3>
+        <div class="mt-4 space-y-5">
+          {% for m in others %}
+            <div class="grid gap-5 xl:grid-cols-2">
+              {{ message_field(m) }}
+              <div class="min-w-0">
+                <p class="jb-label-caps mb-2">Preview</p>
+                <div class="dc"><div class="dc-body">
+                  {% call bot_message() %}<div class="dc-text" id="preview-{{ m.key }}"></div>{% endcall %}
+                </div></div>
+              </div>
+            </div>
+          {% endfor %}
         </div>
       </div>
-    {% endfor %}
+    {% endif %}
   {% endcall %}
 
-  {% call f.section("Behaviour") %}
+  {% call f.section("Behaviour", "What happens after a ticket is closed.", id="behaviour", icon="clock") %}
     <label class="block max-w-xs">
-      <span class="text-sm font-medium">Delete closed ticket channels after (seconds)</span>
+      <span class="jb-field-label">Delete closed ticket channels after (seconds)</span>
       <input type="number" name="delete_delay_seconds" value="{{ values.delete_delay_seconds }}" min="0" max="3600"
-             class="jb-input mt-1">
+             class="jb-input mt-1.5">
     </label>
     {{ f.checkbox("reupload_attachments", "Copy uploaded files to the log channel before deleting the ticket",
                   values.reupload_attachments, "Discord deletes files when their channel is deleted. Recommended.") }}
   {% endcall %}
 
-  <div class="sticky bottom-0 -mx-4 border-t border-jb-border bg-jb-bg/95 px-4 py-3 backdrop-blur-md">
-    <button class="jb-btn-primary px-5">Save changes</button>
-  </div>
+  {{ f.savebar() }}
 </form>
 {% endblock %}

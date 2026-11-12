@@ -1,42 +1,59 @@
 {% extends "guild/_layout.html" %}
 {% import "_form.html" as f %}
+{% import "_icons.html" as i %}
 {% block page %}
-<h1 class="text-xl font-bold tracking-tight">General</h1>
-<div class="mt-3 space-y-2">{{ f.messages_box(errors, saved=saved) }}</div>
+{{ f.page_head("General", "Settings that apply to everything JoltBot does in this server.") }}
+<div class="mt-5 space-y-2">{{ f.messages_box(errors, saved=saved) }}</div>
 
-<form method="post" action="/servers/{{ guild.id }}/general" class="mt-4 space-y-4">
+<form method="post" action="/servers/{{ guild.id }}/general" class="mt-6 space-y-5" data-savebar>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   {% for name, v in versions.items() %}<input type="hidden" name="version_{{ name }}" value="{{ v }}">{% endfor %}
 
-  {% call f.section("Modules", "Switch features on or off for this server. A module must be set up before it can be switched on.") %}
+  {% call f.section("Modules", "Switch features on or off for this server. A module must be set up before it can be switched on.", icon="box") %}
     {% for m in modules %}
-      {{ f.checkbox("enabled_" ~ m.name, m.title, m.enabled, m.description) }}
+      {{ f.toggle("enabled_" ~ m.name, m.title, m.enabled, m.description) }}
+    {% else %}
+      <p class="text-sm text-jb-muted">There are no modules to switch on or off.</p>
     {% endfor %}
   {% endcall %}
 
-  {% call f.section("Appearance") %}
-    <label class="flex items-center gap-3">
-      <input type="color" name="embed_color" value="{{ embed_color }}" class="h-9 w-12 rounded-lg border border-jb-border-strong bg-jb-bg">
-      <span class="text-sm">Embed colour for JoltBot's messages in this server</span>
-    </label>
+  {% call f.section("Appearance", "The colour of the bar on the left of JoltBot's messages in this server.", icon="palette") %}
+    <div class="grid items-center gap-5 sm:grid-cols-[auto_minmax(0,24rem)] sm:justify-between">
+      <label class="flex items-center gap-3">
+        <input type="color" name="embed_color" value="{{ embed_color }}" class="jb-color"
+               data-hex-target="embed-color-hex" data-color-target="embed-color-sample">
+        <span>
+          <span class="jb-field-label">Embed colour</span>
+          <span id="embed-color-hex" class="jb-help font-mono">{{ embed_color }}</span>
+        </span>
+      </label>
+      <div class="dc p-3" aria-hidden="true">
+        <div id="embed-color-sample" class="dc-embed mt-0" style="--dc-bar: {{ embed_color }}">
+          <div class="dc-embed-title">📝 Verification</div>
+          <div>Welcome to <strong>{{ guild.name }}</strong>!</div>
+        </div>
+      </div>
+    </div>
   {% endcall %}
 
-  {% call f.section("Bot notices", "When JoltBot runs into a problem in this server (it can't give a role, can't post a transcript, a channel was deleted), it shows a warning on this dashboard. It can also tell you in Discord.") %}
+  {% call f.section("Bot notices", "When JoltBot runs into a problem in this server (it can't give a role, can't post a transcript, a channel was deleted), it shows a warning on this dashboard. It can also tell you in Discord.", icon="bell") %}
     {% if text_channels is none %}
       <input type="hidden" name="notice_channel_id" value="{{ notice_channel_id }}">
-      <p class="text-sm text-amber-200">Couldn't load this server's channels from Discord right now, so the notices channel can't be changed. Everything else on this page can still be saved.</p>
+      <div class="jb-alert jb-alert-warn">{{ i.icon("alert") }}<p>Couldn't load this server's channels from Discord right now, so the notices channel can't be changed. Everything else on this page can still be saved.</p></div>
     {% else %}
-      {{ f.channel_select("notice_channel_id", "Notices channel (optional)", text_channels, notice_channel_id,
-                          "Each new problem is posted here once, without pinging anyone. Pick a staff-only channel where JoltBot can View Channel and Send Messages.", "(none: dashboard only)") }}
+      <div class="max-w-md">
+        {{ f.channel_select("notice_channel_id", "Notices channel (optional)", text_channels, notice_channel_id,
+                            "Each new problem is posted here once, without pinging anyone. Pick a staff-only channel where JoltBot can View Channel and Send Messages.", "(none: dashboard only)") }}
+      </div>
     {% endif %}
   {% endcall %}
 
-  {% call f.section("Commands") %}
+  {% call f.section("Commands", icon="slash") %}
     <p class="text-sm text-jb-muted">JoltBot uses slash commands only. Type <code class="jb-code">/tickets</code> in Discord to see them.
       By default only members with Manage Server can see them. To let other roles use them, go to
       Server Settings → Integrations → JoltBot.</p>
   {% endcall %}
 
-  <button class="jb-btn-primary px-5">Save changes</button>
+  {{ f.savebar() }}
 </form>
 {% endblock %}

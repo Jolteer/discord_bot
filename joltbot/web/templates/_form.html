@@ -1,35 +1,53 @@
-{# Small reusable form pieces. Import with: {% import "_form.html" as f %} #}
+{# Small reusable form pieces. Import with: {% import "_form.html" as f %}
 
-{% macro section(title, help="") %}
-  <fieldset class="jb-card p-4">
-    <legend class="px-1 text-sm font-semibold">{{ title }}</legend>
-    {% if help %}<p class="-mt-0.5 mb-3 text-[13px] text-jb-muted">{{ help }}</p>{% endif %}
-    <div class="space-y-3">{{ caller() }}</div>
-  </fieldset>
+   Every macro keeps the plain HTML form contract: real inputs with the given
+   `name`, posted the normal way. The styling comes from _styles.css. #}
+{% import "_icons.html" as i %}
+
+{# A titled card that groups related settings. `id` makes it a link target. #}
+{% macro section(title, help="", id="", icon="") %}
+  <section class="jb-card jb-section" {% if id %}id="{{ id }}"{% endif %} aria-label="{{ title }}">
+    <header class="jb-section-head">
+      <h2 class="jb-section-title flex items-center gap-2.5">
+        {% if icon %}<span class="text-jb-accent">{{ i.icon(icon) }}</span>{% endif %}{{ title }}
+      </h2>
+      {% if help %}<p class="mt-1 text-sm text-jb-muted">{{ help }}</p>{% endif %}
+    </header>
+    <div class="jb-section-body">{{ caller() }}</div>
+  </section>
 {% endmacro %}
 
 {% macro checkbox(name, label, checked, help="") %}
-  <label class="flex items-start gap-2.5">
-    <input type="checkbox" name="{{ name }}" {{ 'checked' if checked }} class="mt-0.5 h-4 w-4 accent-jb-accent">
-    <span><span class="text-sm">{{ label }}</span>{% if help %}<span class="block text-xs text-jb-muted">{{ help }}</span>{% endif %}</span>
+  <label class="flex cursor-pointer items-start gap-2.5">
+    <input type="checkbox" name="{{ name }}" {{ 'checked' if checked }} class="jb-check mt-0.5">
+    <span class="min-w-0"><span class="text-sm">{{ label }}</span>{% if help %}<span class="jb-help mt-0.5">{{ help }}</span>{% endif %}</span>
+  </label>
+{% endmacro %}
+
+{# The same checkbox, drawn as an on/off switch. For settings that switch a feature on. #}
+{% macro toggle(name, label, checked, help="") %}
+  <label class="flex cursor-pointer items-start justify-between gap-4">
+    <span class="min-w-0"><span class="text-sm font-semibold">{{ label }}</span>{% if help %}<span class="jb-help mt-0.5">{{ help }}</span>{% endif %}</span>
+    <input type="checkbox" name="{{ name }}" {{ 'checked' if checked }} class="jb-switch mt-0.5">
   </label>
 {% endmacro %}
 
 {% macro role_picker(name, label, roles, selected, help="", assign=False) %}
-  <div>
-    <div class="text-sm font-medium">{{ label }}</div>
-    {% if help %}<p class="text-xs text-jb-muted">{{ help }}</p>{% endif %}
-    <div class="mt-2 grid max-h-52 gap-0.5 overflow-y-auto rounded-[10px] border border-jb-border bg-jb-bg p-1.5 sm:grid-cols-2">
+  <div role="group" aria-label="{{ label }}">
+    <div class="jb-field-label">{{ label }}</div>
+    {% if help %}<p class="jb-help mt-0.5">{{ help }}</p>{% endif %}
+    <div class="jb-picker mt-2 sm:grid-cols-2">
       {% for r in roles %}
-        <label class="flex items-center gap-2 rounded-lg px-2 py-1 text-sm transition duration-150 hover:bg-jb-elevated {{ 'opacity-50' if assign and r.managed }}">
+        <label class="jb-picker-row">
           <input type="checkbox" name="{{ name }}" value="{{ r.id }}" {{ 'checked' if r.id in selected }}
-                 {{ 'disabled' if assign and r.managed }} class="h-4 w-4 accent-jb-accent">
-          <span class="h-2.5 w-2.5 shrink-0 rounded-full" style="background: {{ r.color or '#6b7280' }}"></span>
+                 {{ 'disabled' if assign and r.managed }} class="jb-check">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-full" style="background: {{ r.color or '#838c9d' }}"></span>
           <span class="truncate">{{ r.name }}</span>
-          {% if assign and not r.assignable and not r.managed %}<span class="ml-auto text-xs text-amber-300" title="JoltBot's role must be above this role">above JoltBot</span>{% endif %}
+          {% if assign and r.managed %}<span class="ml-auto shrink-0 text-xs text-jb-subtle" title="Managed by an integration, so JoltBot can't give it">managed</span>
+          {% elif assign and not r.assignable %}<span class="ml-auto shrink-0 text-xs text-jb-warn" title="JoltBot's role must be above this role">above JoltBot</span>{% endif %}
         </label>
       {% else %}
-        <p class="text-sm text-jb-subtle">This server has no roles yet.</p>
+        <p class="px-2 py-1.5 text-sm text-jb-subtle">This server has no roles yet.</p>
       {% endfor %}
     </div>
   </div>
@@ -37,9 +55,9 @@
 
 {% macro role_select(name, label, roles, selected, help="") %}
   <label class="block">
-    <span class="text-sm font-medium">{{ label }}</span>
-    {% if help %}<span class="block text-xs text-jb-muted">{{ help }}</span>{% endif %}
-    <select name="{{ name }}" class="jb-input mt-1">
+    <span class="jb-field-label">{{ label }}</span>
+    {% if help %}<span class="jb-help mt-0.5">{{ help }}</span>{% endif %}
+    <select name="{{ name }}" class="jb-input mt-1.5">
       <option value="">(none)</option>
       {% for r in roles if not r.managed %}
         <option value="{{ r.id }}" {{ 'selected' if r.id == selected }}>{{ r.name }}{{ ' (above JoltBot)' if not r.assignable }}</option>
@@ -50,9 +68,9 @@
 
 {% macro channel_select(name, label, channels, selected, help="", none_label="(pick one)") %}
   <label class="block">
-    <span class="text-sm font-medium">{{ label }}</span>
-    {% if help %}<span class="block text-xs text-jb-muted">{{ help }}</span>{% endif %}
-    <select name="{{ name }}" class="jb-input mt-1">
+    <span class="jb-field-label">{{ label }}</span>
+    {% if help %}<span class="jb-help mt-0.5">{{ help }}</span>{% endif %}
+    <select name="{{ name }}" class="jb-input mt-1.5">
       <option value="">{{ none_label }}</option>
       {% for c in channels %}
         <option value="{{ c.id }}" {{ 'selected' if c.id == selected }}>{{ '#' if c.category is defined else '' }}{{ c.name }}{% if c.category %}  ({{ c.category }}){% endif %}</option>
@@ -61,17 +79,52 @@
   </label>
 {% endmacro %}
 
+{# The banners above a form: saved, errors, then warnings. #}
 {% macro messages_box(errors, warnings=[], issues=[], saved=False) %}
   {% if saved %}
-    <div class="rounded-[10px] border border-emerald-800/80 bg-emerald-950/50 p-3 text-sm text-emerald-200">Saved. JoltBot uses the new settings right away.</div>
+    <div class="jb-alert jb-alert-ok" role="status">
+      {{ i.icon("check-circle") }}
+      <p><span class="font-semibold">Saved.</span> JoltBot uses the new settings right away.</p>
+    </div>
   {% endif %}
   {% if errors %}
-    <div class="rounded-[10px] border border-red-800/80 bg-red-950/50 p-3 text-sm text-red-200" role="alert">
-      <p class="font-semibold">Not saved. Please fix:</p>
-      <ul class="mt-1 list-disc pl-5">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+    <div class="jb-alert jb-alert-danger" role="alert">
+      {{ i.icon("alert") }}
+      <div class="min-w-0">
+        <p class="font-semibold">Not saved. Please fix:</p>
+        <ul class="mt-1 list-disc space-y-0.5 pl-5">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+      </div>
     </div>
   {% endif %}
   {% for w in warnings + issues %}
-    <div class="rounded-[10px] border border-amber-800/80 bg-amber-950/40 p-3 text-sm text-amber-200">⚠️ {{ w }}</div>
+    <div class="jb-alert jb-alert-warn">{{ i.icon("alert") }}<p class="min-w-0">{{ w }}</p></div>
   {% endfor %}
+{% endmacro %}
+
+{# Page title row. Call it with the buttons that belong on the right, or with nothing. #}
+{% macro page_head(title, lead="") %}
+  <header class="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+    <div class="min-w-0">
+      <h1 class="jb-page-title">{{ title }}</h1>
+      {% if lead %}<p class="mt-1 text-jb-muted">{{ lead }}</p>{% endif %}
+    </div>
+    {% if caller %}{{ caller() }}{% endif %}
+  </header>
+{% endmacro %}
+
+{# "Refresh" button: asks Discord again for this server's roles and channels. #}
+{% macro refresh_button(guild_id, csrf_token, next, label) %}
+  <form method="post" action="/servers/{{ guild_id }}/refresh">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="jb-btn jb-btn-secondary jb-btn-sm" title="Reload them from Discord">{{ i.icon("refresh", "h-3.5 w-3.5") }} {{ label }}</button>
+  </form>
+{% endmacro %}
+
+{# Sticky bar with the Save button. The form needs the `data-savebar` attribute. #}
+{% macro savebar(note="Changes apply as soon as you save.") %}
+  <div class="jb-savebar" data-dirty="false">
+    <p class="jb-savebar-note"><span class="jb-savebar-dot" aria-hidden="true"></span><span data-savebar-note aria-live="polite">{{ note }}</span></p>
+    <button class="jb-btn jb-btn-primary px-6" data-save-button>Save changes</button>
+  </div>
 {% endmacro %}

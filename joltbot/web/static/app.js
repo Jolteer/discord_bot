@@ -125,13 +125,16 @@
     });
   }
 
-  // Shows the chosen colour's code next to a colour picker.
+  // Shows the chosen colour's code next to a colour picker (data-hex-target),
+  // and on the sample message beside it (data-color-target).
   function setUpColorInputs() {
     document.querySelectorAll("input[type=color][data-hex-target]").forEach(function (input) {
       const target = document.getElementById(input.dataset.hexTarget);
+      const sample = document.getElementById(input.dataset.colorTarget || "");
       if (!target) return;
       const update = function () {
         target.textContent = input.value.toUpperCase();
+        if (sample) sample.style.setProperty("--dc-bar", input.value);
       };
       input.addEventListener("input", update);
       update();
@@ -161,6 +164,22 @@
     });
   }
 
+  // ------------------------------------------------------ scrolling strips
+  // Scrolls a link into the middle of the sideways-scrolling strip it sits in.
+  // Only the strip moves, never the page.
+  function centreInStrip(link) {
+    const strip = link.parentElement;
+    if (!strip || strip.scrollWidth <= strip.clientWidth) return;
+    const offset = link.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft;
+    strip.scrollLeft = offset - strip.clientWidth / 2 + link.clientWidth / 2;
+  }
+
+  // On phones the dashboard navigation is such a strip: show the current page's link.
+  function setUpNavStrip() {
+    const current = document.querySelector('nav.jb-scroll-x [aria-current="page"]');
+    if (current) centreInStrip(current);
+  }
+
   // -------------------------------------------------------- "on this page"
   // Links with data-spy are highlighted while their section is on screen.
   function setUpSectionSpy() {
@@ -180,11 +199,7 @@
           });
           const link = byId[entry.target.id];
           link.setAttribute("aria-current", "true");
-          // Keep the highlighted link in view inside its own scrolling strip only.
-          const strip = link.parentElement;
-          if (strip && strip.scrollWidth > strip.clientWidth) {
-            strip.scrollLeft = link.offsetLeft - strip.clientWidth / 2 + link.clientWidth / 2;
-          }
+          centreInStrip(link);
         });
       },
       { rootMargin: "-25% 0px -65% 0px" }
@@ -230,6 +245,7 @@
     setUpSaveBars();
     setUpColorInputs();
     setUpMenus();
+    setUpNavStrip();
     setUpSectionSpy();
   }
 
