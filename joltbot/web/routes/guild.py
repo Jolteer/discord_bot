@@ -67,6 +67,7 @@ async def overview(request: Request, access: RequireGuild):
             "title": m.title,
             "description": m.description,
             "toggleable": m.toggleable,
+            "has_page": m.web is not None,  # bot-only modules have no settings page to link to
             "enabled": states[m.name].enabled,
             "problems": states[m.name].config.setup_problems(),
         }

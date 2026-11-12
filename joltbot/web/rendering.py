@@ -38,12 +38,15 @@ def css_built() -> bool:
 
 
 def nav_modules() -> list[dict[str, str]]:
-    """Sidebar entries for every registered module.
+    """Sidebar entries for every registered module that has a dashboard page.
+
+    A bot-only module (no ``web`` in its ``ModuleInfo``) has no page to link to;
+    it still shows on the overview and can be switched on or off under General.
 
     Returns:
         List of ``{"name", "title"}`` dicts for guild layout links.
     """
-    return [{"name": m.name, "title": m.title} for m in MODULES.values()]
+    return [{"name": m.name, "title": m.title} for m in MODULES.values() if m.web]
 
 
 async def render(request: Request, template: str, context: dict[str, Any] | None = None, status_code: int = 200):

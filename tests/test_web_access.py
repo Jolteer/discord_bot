@@ -23,10 +23,12 @@ from joltbot.core.issues import record_issue
 from joltbot.core.models import AuditLog, GuildIssue, WebSession
 from joltbot.core.permissions import ADMINISTRATOR, ELEVATED_PERMISSIONS, MANAGE_GUILD
 from joltbot.core.types import utcnow
+from joltbot.modules.registry import MODULES, ModuleInfo
 from joltbot.web.app import create_app
 from joltbot.web.security import parse_user_guilds
 
 from .conftest import GUILD_A, GUILD_B
+from .example_module.settings import HelloSettings
 
 GUILD_NO_BOT = 444444444444444444
 ALICE = {"id": "1001", "username": "alice"}  # admin of A only
@@ -700,3 +702,45 @@ async def test_logout_clears_the_https_cookie(db, two_guilds, fake):
     assert r.status_code == 303
     cleared = [h for h in r.headers.get_list("set-cookie") if h.startswith("__Host-joltbot_session=")][0].lower()
     assert "max-age=0" in cleared and "secure" in cleared and "path=/" in cleared and "httponly" in cleared
+
+
+# --------------------------------------------------------------------------- a bot-only module (README section 11)
+
+
+@pytest.fixture
+def hello_module(monkeypatch):
+    """The README's example module: a cog and settings, but no dashboard page of its own."""
+    info = ModuleInfo(
+        name="hello",
+        title="Hello",
+        description="A friendly /hello command.",
+        settings_model=HelloSettings,
+        cog="tests.example_module.cog",
+    )
+    monkeypatch.setitem(MODULES, "hello", info)
+
+
+async def test_a_module_without_a_page_shows_on_the_overview_but_links_nowhere(alice, hello_module):
+    page = (await alice.get(f"/servers/{GUILD_A}")).text
+    assert "A friendly /hello command." in page
+    assert f'href="/servers/{GUILD_A}/hello"' not in page  # no dead link in the sidebar or on the card
+    assert f'href="/servers/{GUILD_A}/tickets"' in page  # modules with a page are still linked
+    assert (await alice.get(f"/servers/{GUILD_A}/hello")).status_code == 404
+
+
+async def test_a_module_without_a_page_can_be_switched_on_under_general(db, alice, hello_module):
+    page = (await alice.get(f"/servers/{GUILD_A}/general")).text
+    assert 'name="enabled_hello"' in page and 'name="version_hello" value="0"' in page
+
+    csrf = await csrf_of(alice)
+    form = {
+        "csrf_token": csrf,
+        "embed_color": "#123456",
+        "enabled_hello": "on",
+        "version_general": "1",
+        "version_tickets": "1",
+        "version_hello": "0",
+    }
+    assert (await alice.post(f"/servers/{GUILD_A}/general", data=form)).status_code == 303
+    async with db.session() as session:
+        assert (await load_module(session, GUILD_A, "hello")).enabled is True

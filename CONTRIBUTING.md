@@ -74,12 +74,18 @@ Docker image build that hits `/health`.
 
 ## Adding a new module
 
+The README has a worked example with all the code
+([section 11, "Adding a module"](README.md#adding-a-module-a-new-cog)); the same
+module lives in `tests/example_module/` and is run by the tests. In short:
+
 1. Create `joltbot/modules/<name>/` with at least `settings.py` (a
    `ModuleSettingsModel` subclass with defaults for every field).
 2. Optionally add `cog.py` (bot), `web.py` (FastAPI `router`), and
    `templates/<name>/`.
 3. Register one `ModuleInfo` in [`joltbot/modules/registry.py`](joltbot/modules/registry.py).
-   The bot loads the cog and the dashboard mounts the router and sidebar link.
+   The bot loads the cog; the dashboard mounts the router and adds a sidebar
+   link when the module has a `web` page. A bot-only module still gets its
+   on/off switch on the General page.
 4. Add tests under `tests/` for settings validation, permissions, or web access
    as appropriate.
 5. Update the README command/feature list if the module exposes Discord commands

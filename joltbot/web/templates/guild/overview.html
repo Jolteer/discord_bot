@@ -32,7 +32,11 @@
 
 <div class="mt-4 grid gap-2 lg:grid-cols-2">
   {% for m in modules %}
+    {% if m.has_page %}
     <a href="/servers/{{ guild.id }}/{{ m.name }}" class="jb-card block p-4 transition duration-150 hover:border-jb-border-strong hover:bg-jb-surface-2">
+    {% else %}
+    <div class="jb-card block p-4">
+    {% endif %}
       <div class="flex items-center justify-between gap-2">
         <h2 class="text-sm font-semibold">{{ m.title }}</h2>
         {% if not m.toggleable %}
@@ -47,7 +51,12 @@
       {% if m.toggleable and m.problems %}
         <p class="mt-2 text-xs text-amber-300">Needs setup: {{ m.problems | length }} step{{ 's' if m.problems | length != 1 }} left</p>
       {% endif %}
+    {% if m.has_page %}
     </a>
+    {% else %}
+      <p class="mt-2 text-xs text-jb-subtle">Switch it on or off under <a href="/servers/{{ guild.id }}/general" class="underline">General</a>.</p>
+    </div>
+    {% endif %}
   {% endfor %}
 </div>
 {% endblock %}

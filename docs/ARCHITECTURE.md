@@ -82,7 +82,9 @@ Current modules: **general** (embed colour + module toggles) and **tickets**
 
 Adding a module: create `joltbot/modules/<name>/` with `settings.py`, optional
 `cog.py` / `web.py` / `templates/`, then one `ModuleInfo` entry. No other
-wiring.
+wiring. A module without `web` is bot-only: it gets an overview card and an
+on/off switch on the General page, but no sidebar link. The README (section 11)
+has a worked example, which `tests/test_example_module.py` runs.
 
 ## How Discord events and commands are routed
 

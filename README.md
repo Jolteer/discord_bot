@@ -27,8 +27,12 @@ JoltBot runs as **two processes** that share one SQLite database:
   4. Transcript, optional attachment re-upload, and decision go to a log channel; then the ticket channel is deleted
 - **Recovery** — stuck tickets and unfinished closes resume every 5 minutes and at startup
 - **Diagnostics** — `/tickets diagnostics` checks permissions, role hierarchy, and channel visibility
+- **Running it** (section 9)
+  - Alerts: errors from the bot and the dashboard go to a Discord webhook of yours
+  - Health: `docker compose ps`, a dashboard banner and `/health/bot` all show whether the bot is connected
+  - Backups and updates: `deploy/backup.sh` (nightly) and `deploy/update.sh`
 - **Docker Compose** deploy (migrate → bot + web; optional Caddy HTTPS) and a systemd fallback
-- **Legacy KOC Gatekeeper migration** — one-shot import of old config and open tickets
+- **Legacy KOC Gatekeeper migration** — one-shot import of old config and open tickets (section 8)
 
 ---
 
@@ -86,15 +90,17 @@ joltbot/
 │   ├── guild_settings.py # load/save a server's settings + audit log
 │   ├── guilds.py         # join / leave / startup sync / 30-day purge
 │   ├── issues.py         # problems shown to admins on the dashboard
+│   ├── health.py         # the bot's heartbeat: is it connected to Discord?
+│   ├── alerts.py         # ERROR-level log lines -> your Discord webhook
 │   ├── discord_rest.py   # Discord REST client for the dashboard (cached roles/channels)
-│   ├── logsetup.py       # logging (console + optional rotating file)
+│   ├── logsetup.py       # logging (console + optional rotating file; text or JSON)
 │   ├── permissions.py    # permission bits + invite link
 │   └── templating.py     # {user}/{server} placeholders
 ├── modules/
-│   ├── registry.py       # the list of modules; add new ones here
-│   ├── general/          # embed colour, module on/off switches
+│   ├── registry.py       # the list of modules; add new ones here (section 11)
+│   ├── general/          # embed colour, notices channel, module on/off switches
 │   └── tickets/          # settings.py, cog.py (bot), service.py + store.py (logic, DB), web.py + templates
-├── bot/                  # bot process: client, guild sync, startup retry loop
+├── bot/                  # bot process: client, guild sync, heartbeat, startup retry loop
 └── web/                  # dashboard process: app, routes/, login, security checks, templates, static files
 migrations/               # Alembic database migrations
 scripts/migrate_koc.py    # one-time King of Chaos migration
@@ -117,7 +123,7 @@ requirements-dev.lock     # the same, fully pinned + checksums (generated; used 
 
 ## 2. Discord Developer Portal setup
 
-Open <https://discord.com/developers/applications> and pick the existing app (the old KOC Gatekeeper). Renaming it keeps the same bot account and token, and it stays in King of Chaos.
+Open <https://discord.com/developers/applications> and create an application, or open the one you already have. Renaming an existing application keeps the same bot account and token, and the bot stays in the servers it is in.
 
 **General Information**
 - **Name:** `JoltBot`
@@ -212,7 +218,7 @@ python -m joltbot.bot            # terminal 1
 python -m joltbot.web --reload   # terminal 2; then open http://localhost:8000
 ```
 
-> Use a separate test Discord server, and ideally a separate test application, while developing, so you don't disturb King of Chaos.
+> Use a separate test Discord server, and ideally a separate test application, while developing, so you don't disturb the servers that use the live bot.
 
 ### Tests, lint and formatting
 
@@ -288,6 +294,8 @@ The image:
 
 ## 6. Setting up JoltBot in a server
 
+These steps are the same for every server, and each server's settings are its own. Whoever does them needs **Manage Server** there. Nothing is switched on until an admin sets it up.
+
 1. **Invite JoltBot.** Log in on the dashboard, find the server under **Not added yet** and click **Invite JoltBot**.
 2. **Role order (the #1 cause of "it doesn't work").** Discord only lets a bot give roles that sit **below its own highest role**.
    - In **Server Settings → Roles**, drag the **JoltBot** role above every role it gives: the accepted role (e.g. Member), the pending role (e.g. Unverified) and any extra roles.
@@ -319,7 +327,7 @@ The bot and the dashboard share one SQLite file, so **both containers must run o
 
 ### 7.2 Hetzner VPS with Docker (main path)
 
-These steps assume Ubuntu 24.04 and a user called `botuser`, as with the old bot.
+These steps assume Ubuntu 24.04 and a user called `botuser`.
 
 ```bash
 # as root / sudo: install Docker (official convenience script)
@@ -339,7 +347,7 @@ What goes in `.env` on the server:
 - With no domain yet: `PUBLIC_BASE_URL=http://localhost:8000` (use the SSH tunnel in 7.3).
 - With a domain: `PUBLIC_BASE_URL=https://joltbot.yourname.com` and `DOMAIN=joltbot.yourname.com`.
 
-> Moving King of Chaos? Do section 8 **before** the first start below.
+> Moving a server over from the old KOC Gatekeeper bot? Do section 8 **before** the first start below.
 
 Start it:
 
@@ -352,6 +360,14 @@ docker compose ps
 In the **Hetzner Cloud Console → Firewalls**, allow inbound TCP **22** (SSH), plus **80** and **443** (and UDP 443) once you use Caddy. Port 8000 does **not** need to be open: it's published on 127.0.0.1 only.
 
 Containers have `restart: unless-stopped`, and Docker starts on boot, so JoltBot comes back after a reboot.
+
+Once it is running, three short jobs make it safe to leave alone. Section 9 has the details for each:
+
+1. **Alerts:** set `ALERT_WEBHOOK_URL` so errors reach you in Discord.
+2. **Backups:** add the nightly `deploy/backup.sh` line to cron.
+3. **Uptime:** point a free uptime monitor at `/health/bot` (needs a domain).
+
+From then on, update with `./deploy/update.sh`.
 
 ### 7.3 Pointing a domain at the server
 
@@ -399,11 +415,14 @@ sudo systemctl enable --now joltbot-bot joltbot-web
 - The bot unit restarts forever with growing delays, except for exit code 2 (bad token) and 3 (bad setup). For those, fix the problem and run `sudo systemctl restart joltbot-bot`.
 - For HTTPS, install Caddy from its apt repository, copy `deploy/systemd/Caddyfile` to `/etc/caddy/Caddyfile`, put your domain in it and run `sudo systemctl reload caddy`.
 - Logs: `journalctl -u joltbot-bot -f`, and `~/joltbot/logs/`.
-- To update: `git pull`, `.venv/bin/pip install -r requirements.lock`, `.venv/bin/alembic upgrade head`, then `sudo systemctl restart joltbot-bot joltbot-web`.
+- To update, stop both first so old code never runs against a migrated database: `sudo systemctl stop joltbot-bot joltbot-web`, back up (`.venv/bin/python -m scripts.backup`), `git pull`, `.venv/bin/pip install -r requirements.lock`, `.venv/bin/alembic upgrade head`, then `sudo systemctl start joltbot-bot joltbot-web`.
+- `deploy/backup.sh` and `deploy/update.sh` are for Docker only. The alert webhook, `/health/bot` and the dashboard's offline banner work the same without Docker.
 
 ---
 
 ## 8. Moving King of Chaos from the old bot
+
+> This was a one-time step for the King of Chaos server and has been done. It is kept for reference, and because the script and the old button IDs it relies on are still in the code. A new server never needs it: section 6 is all there is.
 
 `scripts/migrate_koc.py` copies the old bot's `config.json` and `data/tickets.db` into the JoltBot database. It brings over:
 - the same roles and channels
@@ -566,6 +585,91 @@ Short version:
 - **Sessions and CSRF.** Cookie is opaque; DB stores HMAC of it. Discord OAuth access token is stored on the session (scopes `identify guilds` only). POSTs need CSRF; Origin must match when present.
 - **Reliability.** Bot startup retries; ticket recovery every 5 minutes; claim/release; dashboard "issues" for problems with no interaction to reply on.
 - **One dashboard worker.** In-memory Discord caches; single uvicorn worker by design.
-- **Adding a module:** package under `joltbot/modules/<name>/` + one `ModuleInfo` in `modules/registry.py` (see CONTRIBUTING).
+- **Adding a module:** a folder under `joltbot/modules/<name>/` plus one `ModuleInfo` in `modules/registry.py`. Worked example below.
 - **Schema changes:** edit `core/models.py` → `alembic revision --autogenerate` → review → commit. Deploys run `migrate` automatically.
 - **Postgres later** (for multi-host PaaS): add `asyncpg`, point `DATABASE_URL` at Postgres. Models already support it, but it **hasn't been tested yet**.
+
+### Adding a module (a new cog)
+
+A module is one feature: its own per-server settings, optionally bot code (a cog), and optionally a dashboard page. Adding one takes three small pieces and no other wiring.
+
+The example is a tiny `hello` module. The same files live in [tests/example_module/](tests/example_module/) and are run by the tests, so this guide can't drift from the code.
+
+**1. Settings:** `joltbot/modules/hello/settings.py` (next to an empty `__init__.py`)
+
+```python
+from pydantic import Field
+
+from joltbot.modules.base import ModuleSettingsModel
+
+
+class HelloSettings(ModuleSettingsModel):
+    # {user} and {server} are filled in when the message is sent.
+    greeting: str = Field("Hello {user}, welcome to {server}!", min_length=1, max_length=200)
+```
+
+Every field needs a default: that is what lets a server that never configured the module load cleanly. Settings are stored as JSON per server, so adding a field needs no database migration.
+
+**2. Bot code:** `joltbot/modules/hello/cog.py`
+
+```python
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from joltbot.core.guild_settings import load_module
+from joltbot.core.templating import render
+
+
+class Hello(commands.Cog):
+    def __init__(self, bot) -> None:
+        self.bot = bot
+
+    @app_commands.command(name="hello", description="Get a hello from JoltBot.")
+    @app_commands.guild_only()
+    async def hello(self, interaction: discord.Interaction) -> None:
+        # Read the settings fresh on every use, so dashboard changes apply at once.
+        async with self.bot.db.session() as session:
+            state = await load_module(session, interaction.guild_id, "hello")
+        if not state.enabled:
+            await interaction.response.send_message("That feature is switched off on this server.", ephemeral=True)
+            return
+        text = render(state.config.greeting, user=interaction.user.mention, server=interaction.guild.name)
+        await interaction.response.send_message(text, ephemeral=True)
+
+
+async def setup(bot) -> None:
+    await bot.add_cog(Hello(bot))
+```
+
+**3. One registry entry:** in [joltbot/modules/registry.py](joltbot/modules/registry.py), import `HelloSettings` and add to `MODULES`:
+
+```python
+(
+    ModuleInfo(
+        name="hello",  # stored in the database: never rename it once released
+        title="Hello",
+        description="A friendly /hello command.",
+        settings_model=HelloSettings,
+        cog="joltbot.modules.hello.cog",
+    ),
+)
+```
+
+That's all. Without writing anything else:
+
+- The bot loads the cog at startup. If it fails to load, the bot logs an error, skips it and keeps the other modules running.
+- `/hello` is registered with Discord on the next start (it can take a minute to show up).
+- Every server gets the module **switched off**, with an on/off switch on **Dashboard → General** and a card on the overview.
+- Switching it on or off is recorded in that server's audit log.
+
+**Rules that keep a module well-behaved** (the tickets module is the reference for all of them):
+
+- **Settings per event.** Call `load_module(session, guild_id, "<name>")` in every handler and do nothing when `state.enabled` is false. Never cache settings and never hard-code a server, channel or role ID.
+- **Permissions.** Hide admin commands with `@app_commands.default_permissions(...)`, and check again in code, because server admins can change who sees a command. See `_setup_check` in `modules/tickets/cog.py`.
+- **Buttons that survive a restart.** Give the view `timeout=None` and fixed `custom_id`s, and register it with `bot.add_view(...)` in `cog_load`. See `modules/tickets/views.py`.
+- **Problems with nobody to reply to.** `await bot.report_issue(guild_id, "<name>.<what>", "what the admin should do")`, and `bot.resolve_issue(...)` once it works again. The admin sees it on the dashboard and in their notices channel.
+- **New bot permissions** (for example Ban Members) go in `BOT_PERMISSIONS` in `core/permissions.py`, which builds the invite link. Servers that already have the bot must grant the permission themselves.
+- **A settings page.** Add `web.py` with a FastAPI `router` (prefix `/servers/{guild_id}/<name>`), templates in `templates/<name>/`, and `web="joltbot.modules.<name>.web"` in the registry entry. Start from `modules/general/web.py`. Every route takes `access: RequireGuild`, every POST adds `dependencies=[CsrfProtected]`, and any role or channel ID from a form must be checked against that server.
+- **Its own tables.** Add models to `core/models.py` with a `guild_id` foreign key (so a server's data is deleted with it), then `alembic revision --autogenerate`.
+- **Tests.** Start from [tests/test_example_module.py](tests/test_example_module.py). [tests/fakes.py](tests/fakes.py) has stand-ins for members, roles, channels and interactions.
