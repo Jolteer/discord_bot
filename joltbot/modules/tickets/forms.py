@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from ...core.discord_rest import GuildData
-from ...core.permissions import ADMINISTRATOR, BOT_PERMISSIONS
+from ...core.permissions import ADMINISTRATOR, BOT_PERMISSIONS, elevated_permission_names
 from .settings import PLACEHOLDERS, TicketMessages, TicketSettings
 
 MAX_QUESTIONS = 5
@@ -186,6 +186,53 @@ def foreign_id_errors(settings: TicketSettings, data: GuildData) -> list[str]:
     return errors
 
 
+def _granted_roles(settings: TicketSettings) -> list[tuple[str, list[int]]]:
+    """Every way JoltBot hands out a role, as (form label, role IDs)."""
+    return [
+        ("Roles given on accept", list(settings.accept_role_ids)),
+        ("Pending role", [settings.pending_role_id] if settings.pending_role_id else []),
+        ("Extra role choices", [c.role_id for c in settings.extra_role_choices]),
+    ]
+
+
+def powerful_role_errors(
+    settings: TicketSettings, previous: TicketSettings, data: GuildData, *, actor_is_admin: bool
+) -> list[str]:
+    """Stop Manage Server alone from making JoltBot hand out a powerful role.
+
+    In Discord, Manage Server doesn't let you assign roles. Without this check
+    a dashboard user could set, say, a moderator role as the role given on
+    accept and then obtain it through an application.
+
+    Only *newly added* roles are checked, per field. A powerful role an admin
+    already saved stays, so other managers can keep editing the page, but they
+    can't move it to a wider use (e.g. from an extra choice to given-to-everyone).
+
+    Args:
+        settings: Candidate settings from the form.
+        previous: Settings currently saved for this guild.
+        data: Live roles for the guild (permission bits come from here).
+        actor_is_admin: True if the saving user is the owner or an Administrator.
+
+    Returns:
+        Error lines; empty if the save is allowed.
+    """
+    if actor_is_admin:
+        return []
+    roles = {r.id: r for r in data.roles}
+    errors = []
+    for (label, new_ids), (_, old_ids) in zip(_granted_roles(settings), _granted_roles(previous), strict=True):
+        for role_id in new_ids:
+            if role_id in old_ids or role_id not in roles:
+                continue
+            if names := elevated_permission_names(roles[role_id].permissions):
+                errors.append(
+                    f"{label}: {roles[role_id].name} has powerful permissions ({', '.join(names)}). Only the "
+                    "server owner or an Administrator can make JoltBot give out a role like that."
+                )
+    return errors
+
+
 # Server-wide permissions the ticket module needs, as (bit, name). Bits come from the invite list.
 NEEDED_PERMISSIONS = [
     (BOT_PERMISSIONS[name], name)
@@ -234,6 +281,14 @@ def setup_warnings(settings: TicketSettings, data: GuildData) -> list[str]:
             f"JoltBot's role must be above {', '.join(too_high)} or it can't give or remove "
             "them. Drag JoltBot's role higher in Server Settings → Roles."
         )
+
+    for label, ids in _granted_roles(settings):
+        for role_id in ids:
+            if role_id in roles and (names := elevated_permission_names(roles[role_id].permissions)):
+                warnings.append(
+                    f"{label}: JoltBot gives out {roles[role_id].name}, which has powerful permissions "
+                    f"({', '.join(names)}). Make sure that's intended."
+                )
 
     channel_ids = {c.id for c in data.channels}
     for label, channel_id in (

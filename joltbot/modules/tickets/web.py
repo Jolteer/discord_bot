@@ -20,6 +20,7 @@ from .forms import (
     message_fields,
     padded_rows,
     parse_form,
+    powerful_role_errors,
     setup_warnings,
     validation_errors,
 )
@@ -147,6 +148,10 @@ async def save(request: Request, access: RequireGuild):
     except ValidationError as e:
         return await fail(validation_errors(e))
     if errors := foreign_id_errors(settings, data):
+        return await fail(errors)
+    async with get_db(request).session() as session:
+        previous = (await load_module(session, access.guild_id, "tickets")).config
+    if errors := powerful_role_errors(settings, previous, data, actor_is_admin=access.user_guild.is_admin):
         return await fail(errors)
     if enabled and (problems := settings.setup_problems()):
         return await fail(["Can't switch tickets on yet:"] + problems)

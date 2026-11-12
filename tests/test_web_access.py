@@ -7,6 +7,7 @@ goes through the real /login -> /auth/callback flow.
 
 import html
 import re
+from dataclasses import replace
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
@@ -20,9 +21,10 @@ from joltbot.core.guild_settings import load_module
 from joltbot.core.health import write_heartbeat
 from joltbot.core.issues import record_issue
 from joltbot.core.models import AuditLog, GuildIssue, WebSession
-from joltbot.core.permissions import ADMINISTRATOR, MANAGE_GUILD
+from joltbot.core.permissions import ADMINISTRATOR, ELEVATED_PERMISSIONS, MANAGE_GUILD
 from joltbot.core.types import utcnow
 from joltbot.web.app import create_app
+from joltbot.web.security import parse_user_guilds
 
 from .conftest import GUILD_A, GUILD_B
 
@@ -36,6 +38,7 @@ ROLE = {GUILD_A: 5100, GUILD_B: 5200}
 TEXT = {GUILD_A: 6100, GUILD_B: 6200}
 CAT = {GUILD_A: 7100, GUILD_B: 7200}
 BOT_ROLE = {GUILD_A: 5199, GUILD_B: 5299}
+KICK_MEMBERS, MANAGE_MESSAGES = ELEVATED_PERMISSIONS["Kick Members"], ELEVATED_PERMISSIONS["Manage Messages"]
 
 
 def guild_entry(guild_id, perms, owner=False):
@@ -559,3 +562,141 @@ async def test_general_page_still_works_when_discord_is_down(db, alice, fake):
     )
     assert r.status_code == 400 and "Try again in a minute" in html.unescape(r.text)
     assert (await _general(db)).notice_channel_id == TEXT[GUILD_A]
+
+
+# --------------------------------------------------------------------------- roles with powerful permissions
+
+MOD_ROLE = 5150
+DAVE = {"id": "1004", "username": "dave"}  # Administrator in A
+POWERFUL = "has powerful permissions (Kick Members, Manage Messages)"
+
+
+@pytest.fixture
+def mod_role(fake):
+    """Server A also has a Moderator role that can kick and delete messages, below JoltBot's role."""
+    data = fake.data[GUILD_A]
+    moderator = Role(MOD_ROLE, "Moderator", 3, KICK_MEMBERS | MANAGE_MESSAGES, False, 0)
+    fake.data[GUILD_A] = replace(data, roles=[*data.roles, moderator])
+
+
+@pytest.fixture
+async def dave(app, fake):
+    async with client_for(app) as client:
+        yield await login(client, fake, DAVE, [guild_entry(GUILD_A, ADMINISTRATOR)])
+
+
+def _granting(field):
+    """Form fields that make JoltBot give out the Moderator role in the given way."""
+    if field == "extra":
+        return {"extra_label_0": "Mods", "extra_role_0": str(MOD_ROLE)}
+    return {field: str(MOD_ROLE)}
+
+
+@pytest.mark.parametrize("field", ["accept_role_ids", "pending_role_id", "extra"])
+async def test_manage_server_alone_cannot_make_the_bot_give_out_a_powerful_role(db, alice, mod_role, field):
+    """Otherwise someone who can't assign roles in Discord could get one through JoltBot."""
+    csrf = await csrf_of(alice)
+    version = (await tickets_state(db, GUILD_A)).version
+    r = await alice.post(
+        f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, version, extra=_granting(field))
+    )
+    page = html.unescape(r.text)
+    assert r.status_code == 400
+    assert f"Moderator {POWERFUL}" in page and "Only the server owner or an Administrator" in page
+    assert (await tickets_state(db, GUILD_A)).version == version  # nothing saved
+
+
+@pytest.mark.parametrize("field", ["accept_role_ids", "pending_role_id", "extra"])
+async def test_an_administrator_can_and_the_page_keeps_warning_about_it(db, dave, mod_role, field):
+    csrf = await csrf_of(dave)
+    version = (await tickets_state(db, GUILD_A)).version
+    r = await dave.post(f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, version, extra=_granting(field)))
+    assert r.status_code == 303
+    page = html.unescape((await dave.get(f"/servers/{GUILD_A}/tickets")).text)
+    assert f"Moderator, which {POWERFUL}" in page
+
+
+async def test_a_powerful_role_set_by_an_admin_does_not_lock_out_other_managers(db, alice, dave, mod_role):
+    csrf = await csrf_of(dave)
+    r = await dave.post(
+        f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, 1, extra=_granting("accept_role_ids"))
+    )
+    assert r.status_code == 303
+
+    # Alice changes something else and leaves the roles as the admin set them.
+    csrf = await csrf_of(alice)
+    form = ticket_form(GUILD_A, csrf, 2, extra=_granting("accept_role_ids"), delete_delay_seconds="30")
+    assert (await alice.post(f"/servers/{GUILD_A}/tickets", data=form)).status_code == 303
+    assert (await tickets_state(db, GUILD_A)).config.delete_delay_seconds == 30
+
+
+async def test_a_powerful_role_cannot_be_moved_to_a_wider_use_by_a_non_admin(db, alice, dave, mod_role):
+    """Staff may hand it out as an extra role; that doesn't let a non-admin make everyone get it."""
+    csrf = await csrf_of(dave)
+    await dave.post(f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, 1, extra=_granting("extra")))
+
+    csrf = await csrf_of(alice)
+    form = ticket_form(GUILD_A, csrf, 2, extra={**_granting("extra"), "pending_role_id": str(MOD_ROLE)})
+    r = await alice.post(f"/servers/{GUILD_A}/tickets", data=form)
+    assert r.status_code == 400 and f"Pending role: Moderator {POWERFUL}" in html.unescape(r.text)
+
+
+async def test_ordinary_roles_need_no_special_rights(db, alice, mod_role):
+    csrf = await csrf_of(alice)
+    r = await alice.post(f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, 1))
+    assert r.status_code == 303
+    assert "powerful permissions" not in (await alice.get(f"/servers/{GUILD_A}/tickets")).text
+
+
+def test_who_counts_as_an_administrator():
+    owner, admin, manager, member = parse_user_guilds(
+        [
+            guild_entry(1, 0, owner=True),
+            guild_entry(2, ADMINISTRATOR),
+            guild_entry(3, MANAGE_GUILD),
+            guild_entry(4, 0),
+        ]
+    )
+    assert (owner.is_admin, admin.is_admin, manager.is_admin, member.is_admin) == (True, True, False, False)
+    assert (owner.can_manage, admin.can_manage, manager.can_manage, member.can_manage) == (True, True, True, False)
+
+
+# --------------------------------------------------------------------------- Discord outage and logout
+
+
+async def _discord_stops_answering(fake):
+    async def down(token):
+        raise DiscordError("Discord is down", 503)
+
+    fake.get_user_guilds = down
+
+
+async def _age_guild_list(db, minutes):
+    async with db.session() as session, session.begin():
+        await session.execute(update(WebSession).values(guilds_fetched_at=utcnow() - timedelta(minutes=minutes)))
+
+
+async def test_a_short_discord_outage_does_not_lock_admins_out(db, alice, fake):
+    await _discord_stops_answering(fake)
+    await _age_guild_list(db, 10)  # older than the 5-minute refresh, so Discord is asked and fails
+    assert (await alice.get(f"/servers/{GUILD_A}")).status_code == 200
+
+
+async def test_an_old_server_list_is_not_trusted_forever(db, alice, fake):
+    """Permissions can't be re-checked during an outage, so access stops after 30 minutes."""
+    await _discord_stops_answering(fake)
+    await _age_guild_list(db, 31)
+    r = await alice.get(f"/servers/{GUILD_A}")
+    assert r.status_code == 503 and "Discord isn't responding" in html.unescape(r.text)
+
+
+async def test_logout_clears_the_https_cookie(db, two_guilds, fake):
+    """A __Host- cookie is only accepted (and so only removed) when Set-Cookie says Secure."""
+    base = "https://joltbot.example.com"
+    app = create_app(make_config(public_base_url=base), db, fake, check_schema=False)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=base) as client:
+        await login(client, fake, ALICE, [guild_entry(GUILD_A, MANAGE_GUILD)])
+        r = await client.post("/logout", data={"csrf_token": await csrf_of(client)})
+    assert r.status_code == 303
+    cleared = [h for h in r.headers.get_list("set-cookie") if h.startswith("__Host-joltbot_session=")][0].lower()
+    assert "max-age=0" in cleared and "secure" in cleared and "path=/" in cleared and "httponly" in cleared

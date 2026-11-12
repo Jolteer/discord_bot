@@ -25,6 +25,9 @@ SESSION_LIFETIME = timedelta(days=7)
 # How long we trust the user's cached server list (and their permissions in it).
 # If someone loses Manage Server, they keep dashboard access for at most this long.
 GUILD_LIST_MAX_AGE = timedelta(minutes=5)
+# If Discord can't be asked (an outage), the cached list is still used up to this age.
+# After that, server pages answer "Discord isn't responding" until it can be refreshed.
+GUILD_LIST_OUTAGE_LIMIT = timedelta(minutes=30)
 
 
 def hash_token(secret: str, raw_token: str) -> str:
@@ -125,7 +128,8 @@ async def user_guilds(db: Database, discord: DiscordClient, ws: WebSession) -> l
 
     Raises:
         DiscordUnauthorized: Discord login was revoked (caller should delete session).
-        DiscordError: Discord failed and no cache is available to fall back on.
+        DiscordError: Discord failed and there is no cached list recent enough
+            (``GUILD_LIST_OUTAGE_LIMIT``) to fall back on.
     """
     fresh_enough = ws.guilds_fetched_at and utcnow() - ws.guilds_fetched_at < GUILD_LIST_MAX_AGE
     if fresh_enough and ws.guilds_cache is not None:
@@ -135,7 +139,10 @@ async def user_guilds(db: Database, discord: DiscordClient, ws: WebSession) -> l
     except DiscordUnauthorized:
         raise
     except DiscordError:
-        if ws.guilds_cache is not None:
+        # Discord is having trouble. Keep admins working from the list we have, but
+        # not forever: their permissions can't be re-checked while it lasts.
+        usable = ws.guilds_fetched_at and utcnow() - ws.guilds_fetched_at < GUILD_LIST_OUTAGE_LIMIT
+        if usable and ws.guilds_cache is not None:
             return ws.guilds_cache
         raise
     async with db.session() as session, session.begin():

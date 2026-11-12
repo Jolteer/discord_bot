@@ -29,6 +29,35 @@ BOT_PERMISSIONS = {
 BOT_PERMISSIONS_VALUE = sum(BOT_PERMISSIONS.values())  # = 2251800082377746
 
 
+# Permissions that let a member moderate or reconfigure a server. A role carrying any
+# of these is "powerful": only an Administrator or the owner may make JoltBot hand it
+# out, because in Discord itself Manage Server alone can't assign roles at all.
+ELEVATED_PERMISSIONS = {
+    "Administrator": ADMINISTRATOR,
+    "Kick Members": 1 << 1,
+    "Ban Members": 1 << 2,
+    "Manage Channels": 1 << 4,
+    "Manage Server": MANAGE_GUILD,
+    "Manage Messages": 1 << 13,
+    "Mention @everyone": 1 << 17,
+    "Manage Nicknames": 1 << 27,
+    "Manage Roles": 1 << 28,
+    "Manage Webhooks": 1 << 29,
+    "Manage Expressions": 1 << 30,
+    "Manage Events": 1 << 33,
+    "Manage Threads": 1 << 34,
+    "Moderate Members": 1 << 40,
+}
+
+
+def _bits(permissions: int | str | None) -> int:
+    """Discord sends permissions as a decimal string; anything unreadable counts as none."""
+    try:
+        return int(permissions or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def can_manage_guild(permissions: int | str | None, *, owner: bool = False) -> bool:
     """Whether a Discord user may manage JoltBot for a server.
 
@@ -41,13 +70,33 @@ def can_manage_guild(permissions: int | str | None, *, owner: bool = False) -> b
     Returns:
         True if the user may open dashboard guild pages / change settings.
     """
-    if owner:
-        return True
-    try:
-        bits = int(permissions or 0)
-    except (TypeError, ValueError):
-        return False
-    return bool(bits & ADMINISTRATOR) or bool(bits & MANAGE_GUILD)
+    return owner or bool(_bits(permissions) & (ADMINISTRATOR | MANAGE_GUILD))
+
+
+def is_administrator(permissions: int | str | None, *, owner: bool = False) -> bool:
+    """Whether a Discord user has full control of a server (owner or Administrator).
+
+    Args:
+        permissions: Discord permission bitfield (int or decimal string from JSON).
+        owner: True if the user owns the guild.
+
+    Returns:
+        True for the owner or anyone with Administrator. Manage Server alone is not enough.
+    """
+    return owner or bool(_bits(permissions) & ADMINISTRATOR)
+
+
+def elevated_permission_names(permissions: int | str | None) -> list[str]:
+    """Names of the moderation/management permissions in a role's bitfield.
+
+    Args:
+        permissions: The role's Discord permission bitfield.
+
+    Returns:
+        Display names from ``ELEVATED_PERMISSIONS``; empty for an ordinary role.
+    """
+    bits = _bits(permissions)
+    return [name for name, bit in ELEVATED_PERMISSIONS.items() if bits & bit]
 
 
 def bot_invite_url(client_id: str, guild_id: int | str | None = None) -> str:

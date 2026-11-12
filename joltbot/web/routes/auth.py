@@ -130,8 +130,11 @@ async def logout(request: Request, ws: RequireSession):
         Redirect to the landing page.
     """
     await delete_session(get_db(request), ws.id)
+    config = get_config(request)
     response = RedirectResponse("/", status_code=303)
-    # TODO: When using ``__Host-joltbot_session`` (HTTPS), browsers may require
-    # ``secure=True`` on delete_cookie to clear the cookie; verify logout clears it.
-    response.delete_cookie(session_cookie_name(get_config(request)), path="/")
+    # Same attributes as when the cookie was set. Browsers ignore any Set-Cookie for a
+    # __Host- name that lacks Secure, including the one that is meant to remove it.
+    response.delete_cookie(
+        session_cookie_name(config), path="/", secure=config.uses_https, httponly=True, samesite="lax"
+    )
     return response

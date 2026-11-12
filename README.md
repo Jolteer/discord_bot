@@ -509,6 +509,7 @@ Put both lines in a small script and run it nightly with cron. Each server's log
 | Dashboard says JoltBot isn't in the server | Invite it from the server list, then reload. |
 | Dashboard can't load roles/channels | The bot token in `.env` is wrong, or Discord is briefly down. Use **↻ Refresh**. |
 | New roles/channels don't show up in the dashboard | Click **↻ Refresh roles & channels** (it caches for 60 seconds). |
+| "… has powerful permissions … Only the server owner or an Administrator can …" | You have Manage Server but not Administrator, and the role you picked can kick, ban, manage roles or similar. Ask the owner or an Administrator to save that setting. Roles they already saved can stay. |
 | "My highest role … is not above …" | Drag JoltBot's role higher (section 6, step 2). |
 | Panel says applications aren't set up | The module is off or setup isn't finished. Check the dashboard. |
 | No message in the notices channel | JoltBot needs View Channel and Send Messages there; the dashboard overview says so if it can't post. Each problem is posted once and not repeated until it has been fixed or dismissed. |
@@ -526,7 +527,7 @@ Short version:
 
 - **Per-server settings.** Each module has a Pydantic model with defaults (e.g. `modules/tickets/settings.py`), stored as JSON in `module_settings`. Unconfigured servers get defaults with the module **off**.
 - **Live changes.** The bot reads settings from the DB on every event — no restart, no settings cache.
-- **Dashboard access.** `web/security.py` checks Manage Server / Admin / owner with Discord before any guild DB lookup. Guild list cached 5 minutes. Role/channel IDs in forms must belong to that server.
+- **Dashboard access.** `web/security.py` checks Manage Server / Admin / owner with Discord before any guild DB lookup. Guild list cached 5 minutes (used for up to 30 minutes if Discord can't be reached, then server pages answer 503). Role/channel IDs in forms must belong to that server. Only the owner or an Administrator can make JoltBot give out a role with moderation or management permissions.
 - **Sessions and CSRF.** Cookie is opaque; DB stores HMAC of it. Discord OAuth access token is stored on the session (scopes `identify guilds` only). POSTs need CSRF; Origin must match when present.
 - **Reliability.** Bot startup retries; ticket recovery every 5 minutes; claim/release; dashboard "issues" for problems with no interaction to reply on.
 - **One dashboard worker.** In-memory Discord caches; single uvicorn worker by design.

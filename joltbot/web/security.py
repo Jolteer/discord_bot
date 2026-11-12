@@ -20,7 +20,7 @@ from ..core.db import Database
 from ..core.discord_rest import DiscordClient, DiscordError, DiscordUnauthorized
 from ..core.guild_settings import Actor
 from ..core.models import Guild, WebSession
-from ..core.permissions import can_manage_guild
+from ..core.permissions import can_manage_guild, is_administrator
 from .sessions import delete_session, load_session, user_guilds
 
 SESSION_COOKIE = "joltbot_session"
@@ -38,7 +38,8 @@ class UserGuild:
     name: str
     icon: str | None
     owner: bool
-    can_manage: bool
+    can_manage: bool  # may use the dashboard for this server
+    is_admin: bool  # owner or Administrator: may also make JoltBot give out powerful roles
 
     @property
     def icon_url(self) -> str | None:
@@ -53,6 +54,7 @@ def parse_user_guilds(raw: list[dict[str, Any]]) -> list[UserGuild]:
             g.get("icon"),
             bool(g.get("owner")),
             can_manage_guild(g.get("permissions"), owner=bool(g.get("owner"))),
+            is_administrator(g.get("permissions"), owner=bool(g.get("owner"))),
         )
         for g in raw
     ]

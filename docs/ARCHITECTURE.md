@@ -153,6 +153,13 @@ Key rules (see `modules/tickets/service.py` and `store.py`):
    leaking “is the bot here?”). Then the guild must exist and be `active`.
 5. Guild list cached up to 5 minutes; role/channel lists for forms cached ~60s
    (refresh button clears them).
+   If Discord can't be reached, the cached guild list is used for up to 30
+   minutes, then guild pages answer 503.
+6. **Powerful roles** (`forms.powerful_role_errors`): Manage Server is enough to
+   use the dashboard, but only the owner or an Administrator may add a role with
+   moderation/management permissions (`core/permissions.ELEVATED_PERMISSIONS`) as
+   an accept, pending or extra role. In Discord, Manage Server alone can't assign
+   roles, so the bot must not become a way around that.
 
 ## Data storage
 
