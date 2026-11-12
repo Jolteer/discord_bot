@@ -9,6 +9,7 @@ with distinct exit codes that the systemd unit is told not to restart on.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import signal
@@ -17,6 +18,7 @@ import time
 
 import discord
 
+from ..core.alerts import AlertError, post_to_webhook
 from ..core.config import get_config
 from ..core.db import Database
 from ..core.logsetup import setup_logging
@@ -80,15 +82,47 @@ async def run_once() -> None:
         await bot.start(get_config().discord_token)
 
 
+def send_test_alert(url: str) -> int:
+    """Post one test message to the alert webhook and say whether it worked.
+
+    Run with ``python -m joltbot.bot --test-alert`` after setting
+    ``ALERT_WEBHOOK_URL``. Prints plain text and never prints the URL.
+
+    Args:
+        url: ``ALERT_WEBHOOK_URL`` from the config (may be empty).
+
+    Returns:
+        Process exit code: 0 if Discord accepted the message, 1 otherwise.
+    """
+    if not url:
+        print("ALERT_WEBHOOK_URL is not set in .env, so alerts are off. See .env.example.")
+        return 1
+    try:
+        post_to_webhook(url, "✅ **JoltBot** test alert. Errors from the bot and the dashboard will show up here.")
+    except AlertError as e:
+        print(f"Test alert failed: {e}. Check ALERT_WEBHOOK_URL in .env.")
+        return 1
+    print("Test alert sent. Check the channel the webhook posts to.")
+    return 0
+
+
 def main() -> None:
     """CLI entry: validate setup, then connect with forever-retry on transient errors.
+
+    ``--test-alert`` sends one message to ``ALERT_WEBHOOK_URL`` and exits
+    without connecting to Discord's gateway.
 
     Exit codes:
         2 — Discord rejected the token (``EXIT_BAD_TOKEN``).
         3 — Missing env / schema / privileged intents (``EXIT_BAD_SETUP``).
     """
+    parser = argparse.ArgumentParser(prog="python -m joltbot.bot", description="Run the JoltBot Discord bot")
+    parser.add_argument("--test-alert", action="store_true", help="send one test message to ALERT_WEBHOOK_URL and exit")
+    args = parser.parse_args()
     config = get_config()
-    setup_logging("bot", config.log_level, config.log_dir, config.log_format)
+    if args.test_alert:
+        sys.exit(send_test_alert(config.alert_webhook_url))
+    setup_logging("bot", config.log_level, config.log_dir, config.log_format, config.alert_webhook_url)
     if missing := config.missing("discord_token"):
         log.critical("Missing in .env: %s (see .env.example).", ", ".join(missing))
         sys.exit(EXIT_BAD_SETUP)

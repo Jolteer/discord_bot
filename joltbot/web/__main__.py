@@ -27,7 +27,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=config.port)
     parser.add_argument("--reload", action="store_true", help="restart on code changes (development)")
     args = parser.parse_args()
-    setup_logging("web", config.log_level, config.log_dir, config.log_format)
+    setup_logging("web", config.log_level, config.log_dir, config.log_format, config.alert_webhook_url)
     uvicorn.run(
         "joltbot.web.app:create_app",
         factory=True,

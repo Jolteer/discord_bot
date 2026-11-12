@@ -184,6 +184,9 @@ Guild-owned rows use `ON DELETE CASCADE` when a left guild is purged.
 ## Reliability patterns
 
 - Bot process retry loop with exit codes for permanent failures.
+- Operator alerts (`core/alerts.py`): with `ALERT_WEBHOOK_URL` set, ERROR-level
+  log lines from either process go to a Discord webhook on a background thread,
+  de-duplicated and rate-limited.
 - Ticket recovery loop + claim/release.
 - Issues table for admin-visible problems.
 - Optimistic concurrency on settings saves (`StaleSettingsError`).

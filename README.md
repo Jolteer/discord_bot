@@ -180,6 +180,7 @@ All settings come from environment variables, or from a `.env` file in the proje
 | `LOG_LEVEL` | | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`. |
 | `LOG_DIR` | | `logs` | Folder for rotating log files. Empty = console only (Docker sets this). |
 | `LOG_FORMAT` | | `text` | `text` for readable lines, `json` for one JSON object per line (`ts`, `level`, `logger`, `message`, plus fields such as `guild_id`). |
+| `ALERT_WEBHOOK_URL` | | | Discord webhook that receives ERROR-level log lines from both processes (section 9). A secret. Empty = no alerts. |
 | `DOMAIN` | Caddy | | Docker Compose + Caddy only: the domain to get an HTTPS certificate for. |
 
 If a required variable is missing, the process stops at startup and names it. Logs never contain the token, the secrets or the one-time login code.
@@ -457,6 +458,18 @@ docker compose --profile proxy up -d --build   # rebuilds, runs new migrations, 
 Migrations run automatically (the `migrate` service). To change the database schema, see section 11.
 
 **Logs:** `docker compose logs -f bot` / `web` / `migrate`. Docker keeps them per container, capped at 5 files of 10 MB each (`x-logging` in `docker-compose.yml`), so they can't fill the disk. The cap applies to containers created after it was added: run `docker compose up -d --force-recreate` once. Set `LOG_FORMAT=json` in `.env` for machine-readable lines.
+
+**Alerts:** to be told when something breaks, create a webhook in a private channel of your own server (Edit Channel → Integrations → Webhooks → New Webhook → Copy Webhook URL) and put it in `.env` as `ALERT_WEBHOOK_URL`. Then:
+
+```bash
+docker compose run --rm bot python -m joltbot.bot --test-alert   # posts one test message
+docker compose up -d                                             # restart so both processes use it
+```
+
+- Every ERROR or CRITICAL log line from the bot or the dashboard is posted there, with its traceback.
+- The same error is posted at most once per 10 minutes, and at most 10 alerts go out per 10 minutes, so an outage can't flood the channel.
+- It works when the bot is offline too, because a webhook needs no bot connection. A wrong token or a missing setting is reported on every restart attempt (about once a minute under Docker) until it's fixed.
+- Server admins don't see these. Problems in their own server appear as warnings on their dashboard.
 
 **Backups:** the `joltbot-data` volume holds all settings and ticket state. A safe copy while JoltBot keeps running:
 

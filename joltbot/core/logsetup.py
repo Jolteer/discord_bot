@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from .alerts import install_alerts
+
 CALLBACK_PATH = "/auth/callback"
 
 # Attributes every LogRecord has. Anything else on a record came from `extra=`.
@@ -58,14 +60,22 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(data, default=str, ensure_ascii=False)
 
 
-def setup_logging(process_name: str, level: str = "INFO", log_dir: str = "logs", log_format: str = "text") -> None:
+def setup_logging(
+    process_name: str,
+    level: str = "INFO",
+    log_dir: str = "logs",
+    log_format: str = "text",
+    alert_webhook_url: str = "",
+) -> None:
     """Send logs to stdout, and also to <log_dir>/<process_name>.log unless log_dir is empty.
 
     Args:
-        process_name: ``"bot"`` or ``"web"``; names the log file.
+        process_name: ``"bot"`` or ``"web"``; names the log file and labels alerts.
         level: Minimum level to log.
         log_dir: Folder for the rotating log file. Empty = console only.
         log_format: ``"text"`` (readable lines) or ``"json"`` (see ``JsonFormatter``).
+        alert_webhook_url: Discord webhook that receives ERROR and above
+            (see ``core/alerts.py``). Empty = no alerts.
     """
     fmt: logging.Formatter
     if log_format == "json":
@@ -85,6 +95,9 @@ def setup_logging(process_name: str, level: str = "INFO", log_dir: str = "logs",
     root = logging.getLogger()
     root.setLevel(level)
     root.handlers[:] = handlers
+    # Added last, after the console is set up, so a problem with the URL is visible there.
+    if (alerts := install_alerts(alert_webhook_url, process_name)) is not None:
+        root.addHandler(alerts)
     logging.getLogger("discord.http").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     access = logging.getLogger("uvicorn.access")

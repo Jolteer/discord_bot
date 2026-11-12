@@ -40,11 +40,19 @@ class AppConfig(BaseSettings):
     log_dir: str = "logs"
     # "text" = readable lines; "json" = one JSON object per line, for log tools.
     log_format: LogFormat = "text"
+    # Discord webhook that receives ERROR-level log lines (core/alerts.py). Empty = no alerts.
+    # A secret: anyone who has the URL can post to that channel.
+    alert_webhook_url: str = ""
 
     @field_validator("public_base_url")
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
         return value.strip().rstrip("/")
+
+    @field_validator("alert_webhook_url")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        return value.strip()
 
     @field_validator("log_level", mode="before")
     @classmethod
