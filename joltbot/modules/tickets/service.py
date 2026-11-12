@@ -86,6 +86,27 @@ class TicketManager:
         except discord.NotFound:
             return None
 
+    async def _has_left(self, guild: discord.Guild, user_id: int) -> bool:
+        """Ask Discord whether a member missing from the cache has really left.
+
+        The member cache can be incomplete (loading a server's member list can
+        time out at startup), so a cache miss alone must never close a ticket.
+
+        Args:
+            guild: Guild the ticket belongs to.
+            user_id: Applicant to look up.
+
+        Returns:
+            True only when Discord confirms the member is gone. False if they
+            are still there, or if Discord couldn't answer (checked again on
+            the next recovery round).
+        """
+        try:
+            return await self._get_member(guild, user_id) is None
+        except (discord.HTTPException, OSError) as e:
+            log.warning("Guild %s: couldn't check whether %s left; leaving their ticket open: %s", guild.id, user_id, e)
+            return False
+
     async def _dm(self, member: discord.Member, embed: discord.Embed) -> bool:
         try:
             await member.send(embed=embed)
@@ -624,7 +645,7 @@ class TicketManager:
             if guild.get_channel(t.channel_id) is None:
                 if await store.claim(self.db, t.id, outcome="channel_deleted", handled_by=None):
                     self._spawn(self.finalize(t.id, resumed=True))
-            elif guild.get_member(t.user_id) is None:
+            elif guild.get_member(t.user_id) is None and await self._has_left(guild, t.user_id):
                 if await store.claim(self.db, t.id, outcome="left", handled_by=None):
                     self._spawn(self.finalize(t.id, resumed=True))
         for t in await store.list_for_guild(self.db, guild.id, "closing"):

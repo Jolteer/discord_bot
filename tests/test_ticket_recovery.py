@@ -5,7 +5,9 @@ These use tiny fake Discord objects (tests/fakes.py), so no network or bot token
 
 import asyncio
 from datetime import timedelta
+from unittest.mock import AsyncMock
 
+import discord
 from sqlalchemy import update
 
 from joltbot.core.models import Ticket
@@ -14,7 +16,7 @@ from joltbot.modules.tickets import store
 from joltbot.modules.tickets.service import STUCK_AFTER_SECONDS, TicketManager
 
 from .conftest import GUILD_A, GUILD_B
-from .fakes import FakeBot, FakeGuild
+from .fakes import FakeBot, FakeGuild, http_error
 from .fakes import settle as _settle
 
 
@@ -108,3 +110,28 @@ async def test_recover_closes_ticket_whose_member_left(db, two_guilds):
     await _settle(manager)
     ticket = await store.get(db, ticket_id)
     assert ticket.outcome == "left" and ticket.status == "closed"
+
+
+async def test_recover_keeps_ticket_when_member_is_only_missing_from_the_cache(db, two_guilds):
+    # Discord's member list can fail to load at startup. The applicant is still in the
+    # server, so their ticket must not be closed as "left".
+    ticket_id = await _reserve(db, user_id=1)
+    await store.set_channel(db, ticket_id, 9001)
+    guild = FakeGuild(GUILD_A, channels=(9001,), members=())
+    guild.add_member(1, cached=False)
+    manager = TicketManager(FakeBot(db, [guild]))
+    await manager.recover(guild)
+    await _settle(manager)
+    ticket = await store.get(db, ticket_id)
+    assert ticket.status == "open" and ticket.outcome is None
+
+
+async def test_recover_keeps_ticket_when_discord_cannot_say_whether_the_member_left(db, two_guilds):
+    ticket_id = await _reserve(db, user_id=1)
+    await store.set_channel(db, ticket_id, 9001)
+    guild = FakeGuild(GUILD_A, channels=(9001,), members=())
+    guild.fetch_member = AsyncMock(side_effect=http_error(discord.HTTPException, 503))
+    manager = TicketManager(FakeBot(db, [guild]))
+    await manager.recover(guild)
+    await _settle(manager)
+    assert (await store.get(db, ticket_id)).status == "open"  # checked again on the next round
