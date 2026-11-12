@@ -1,29 +1,50 @@
 {% extends "base.html" %}
+{% import "_icons.html" as i %}
 {% block title %}{{ guild.name }} · JoltBot{% endblock %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
+{% block container_class %}jb-container-wide{% endblock %}
+{% block main_class %}jb-container jb-container-wide py-6 lg:py-9{% endblock %}
 {% block content %}
-<div class="flex flex-col gap-5 md:flex-row">
-  <aside class="md:w-52 md:shrink-0">
-    <div class="flex items-center gap-2.5">
-      {% if guild.icon_url %}
-        <img src="{{ guild.icon_url }}" alt="" class="h-9 w-9 rounded-full">
-      {% else %}
-        <div class="flex h-9 w-9 items-center justify-center rounded-full bg-jb-elevated text-sm font-bold">{{ guild.initial }}</div>
-      {% endif %}
-      <div class="min-w-0 truncate text-sm font-semibold">{{ guild.name }}</div>
-    </div>
-    <nav class="mt-3 flex gap-1 overflow-x-auto md:flex-col" aria-label="Server settings">
-      {% set links = [("overview", "Overview", "/servers/" ~ guild.id)] %}
-      {% for m in nav_modules %}{% set _ = links.append((m.name, m.title, "/servers/" ~ guild.id ~ "/" ~ m.name)) %}{% endfor %}
-      {% if guild.is_manager %}{% set _ = links.append(("access", "Dashboard access", "/servers/" ~ guild.id ~ "/access")) %}{% endif %}
-      {% set _ = links.append(("audit", "Audit log", "/servers/" ~ guild.id ~ "/audit")) %}
-      {% for key, label, href in links %}
-        <a href="{{ href }}"
-           class="whitespace-nowrap {{ 'jb-nav-link jb-nav-link-active' if active == key else 'jb-nav-link' }}">{{ label }}</a>
+{# Icons for the sidebar, by module name. A module without one gets a plain box. #}
+{% set module_icons = {"general": "sliders", "tickets": "ticket"} %}
+<div class="grid gap-6 lg:grid-cols-[15.5rem_minmax(0,1fr)] lg:gap-10">
+  <aside class="min-w-0 lg:sticky lg:top-[calc(var(--jb-header-h)+2.25rem)] lg:self-start">
+    {# Server switcher. The list of servers is fetched from the server list page when it is opened
+       (htmx); without htmx the menu still offers the link to that page. #}
+    <details class="jb-menu jb-switcher" data-menu
+             {% if htmx_available %}hx-get="/servers" hx-trigger="toggle once" hx-target="#switcher-list"
+             hx-select="#joined-servers" hx-swap="innerHTML ignoreTitle:true"{% endif %}>
+      <summary aria-label="Switch server. Current server: {{ guild.name }}">
+        {{ i.avatar(guild.icon_url, guild.initial, "h-9 w-9 text-sm", server=True) }}
+        <span class="min-w-0 flex-1">
+          <span class="jb-label-caps block">Server</span>
+          <span class="block truncate text-sm font-semibold">{{ guild.name }}</span>
+        </span>
+        {{ i.icon("chevron-down", "jb-chevron h-4 w-4 shrink-0 text-jb-subtle") }}
+      </summary>
+      <div class="jb-menu-panel inset-x-0 text-sm">
+        {% if htmx_available %}
+          <div id="switcher-list"><p class="px-2.5 py-2 text-jb-subtle">Loading your servers…</p></div>
+          <hr class="my-1.5 border-jb-line">
+        {% endif %}
+        <a href="/servers" class="jb-menu-item">{{ i.icon("grid", "h-4 w-4 text-jb-subtle") }} All servers</a>
+      </div>
+    </details>
+
+    <nav class="jb-scroll-x -mx-(--jb-gutter) mt-4 flex gap-1 px-(--jb-gutter) lg:mx-0 lg:flex-col lg:px-0" aria-label="Server settings">
+      {% set links = [("overview", "Overview", "/servers/" ~ guild.id, "grid")] %}
+      {% for m in nav_modules %}{% set _ = links.append((m.name, m.title, "/servers/" ~ guild.id ~ "/" ~ m.name, module_icons.get(m.name, "box"))) %}{% endfor %}
+      {% if guild.is_manager %}{% set _ = links.append(("access", "Dashboard access", "/servers/" ~ guild.id ~ "/access", "key")) %}{% endif %}
+      {% set _ = links.append(("audit", "Audit log", "/servers/" ~ guild.id ~ "/audit", "history")) %}
+      {% for key, label, href, icon in links %}
+        <a href="{{ href }}" class="jb-sidenav-link" {% if active == key %}aria-current="page"{% endif %}>
+          {{ i.icon(icon, "h-[1.125rem] w-[1.125rem] shrink-0") }} {{ label }}
+        </a>
       {% endfor %}
-      <a href="/servers" class="jb-nav-link text-jb-subtle">← All servers</a>
     </nav>
   </aside>
-  <section class="min-w-0 flex-1">
+
+  <section class="min-w-0">
     {% block page %}{% endblock %}
   </section>
 </div>

@@ -1,62 +1,94 @@
 {% extends "guild/_layout.html" %}
+{% import "_icons.html" as i %}
 {% block page %}
-<h1 class="text-xl font-bold tracking-tight">Overview</h1>
+{% set module_icons = {"general": "sliders", "tickets": "ticket"} %}
+<header class="flex flex-wrap items-center justify-between gap-3">
+  <div>
+    <h1 class="jb-page-title">Overview</h1>
+    <p class="mt-1 text-jb-muted">What JoltBot does in {{ guild.name }}, and anything that needs your attention.</p>
+  </div>
+  {% if bot_offline %}
+    <span class="jb-badge jb-badge-warn jb-badge-dot">Bot not connected</span>
+  {% else %}
+    <span class="jb-badge jb-badge-ok jb-badge-dot">Bot connected</span>
+  {% endif %}
+</header>
 
 {% if bot_offline %}
-  <div class="mt-4 rounded-[10px] border border-amber-800/80 bg-amber-950/40 p-3 text-sm text-amber-200" role="status">
-    <p class="font-semibold">⚠️ JoltBot is offline right now.</p>
-    <p class="mt-1">Buttons and commands in Discord won't respond until it's back.
-      {% if bot_last_seen %}It was last connected at {{ bot_last_seen.strftime('%Y-%m-%d %H:%M') }} UTC.{% endif %}
-      Settings you save here are kept and apply as soon as it returns.</p>
+  <div class="jb-alert jb-alert-warn mt-6" role="status">
+    {{ i.icon("alert") }}
+    <div>
+      <p class="font-semibold">JoltBot is offline right now.</p>
+      <p class="mt-1 text-jb-muted">Buttons and commands in Discord won't respond until it's back.
+        {% if bot_last_seen %}It was last connected at {{ bot_last_seen.strftime('%Y-%m-%d %H:%M') }} UTC.{% endif %}
+        Settings you save here are kept and apply as soon as it returns.</p>
+    </div>
   </div>
 {% endif %}
 
 {% if issues %}
-  <div class="mt-4 space-y-2">
-    <h2 class="jb-section-label text-red-300">Problems JoltBot ran into</h2>
-    {% for issue in issues %}
-      <div class="flex items-start gap-3 rounded-[10px] border border-red-900/80 bg-red-950/50 p-3 text-sm">
-        <div class="flex-1">
-          <p>{{ issue.message }}</p>
-          <p class="mt-1 text-xs text-red-300/70">Seen {{ issue.count }} time{{ 's' if issue.count != 1 }}, last {{ issue.last_seen.strftime('%Y-%m-%d %H:%M') }} UTC</p>
+  <section class="mt-6" aria-labelledby="issues-heading">
+    <h2 id="issues-heading" class="jb-label-caps text-jb-danger">Problems JoltBot ran into</h2>
+    <div class="mt-3 space-y-2">
+      {% for issue in issues %}
+        <div class="jb-alert jb-alert-danger">
+          {{ i.icon("alert") }}
+          <div class="min-w-0 flex-1">
+            <p>{{ issue.message }}</p>
+            <p class="mt-1 text-xs text-jb-muted">Seen {{ issue.count }} time{{ 's' if issue.count != 1 }}, last {{ issue.last_seen.strftime('%Y-%m-%d %H:%M') }} UTC</p>
+          </div>
+          <form method="post" action="/servers/{{ guild.id }}/issues/{{ issue.id }}/dismiss" class="shrink-0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="jb-btn jb-btn-ghost jb-btn-sm">Dismiss</button>
+          </form>
         </div>
-        <form method="post" action="/servers/{{ guild.id }}/issues/{{ issue.id }}/dismiss">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button class="rounded-lg px-2 py-1 text-xs text-red-200 transition duration-150 hover:bg-red-900">Dismiss</button>
-        </form>
-      </div>
-    {% endfor %}
-    <p class="text-xs text-jb-subtle">Warnings clear themselves once JoltBot sees the problem is fixed.</p>
-  </div>
+      {% endfor %}
+    </div>
+    <p class="mt-2 text-xs text-jb-subtle">Warnings clear themselves once JoltBot sees the problem is fixed.</p>
+  </section>
 {% endif %}
 
-<div class="mt-4 grid gap-2 lg:grid-cols-2">
-  {% for m in modules %}
-    {% if m.has_page %}
-    <a href="/servers/{{ guild.id }}/{{ m.name }}" class="jb-card block p-4 transition duration-150 hover:border-jb-border-strong hover:bg-jb-surface-2">
-    {% else %}
-    <div class="jb-card block p-4">
-    {% endif %}
-      <div class="flex items-center justify-between gap-2">
-        <h2 class="text-sm font-semibold">{{ m.title }}</h2>
-        {% if not m.toggleable %}
-          <span class="rounded-md bg-jb-elevated px-2 py-0.5 text-xs text-jb-muted">Always on</span>
-        {% elif m.enabled %}
-          <span class="rounded-md bg-emerald-900/80 px-2 py-0.5 text-xs text-emerald-200">On</span>
-        {% else %}
-          <span class="rounded-md bg-jb-elevated px-2 py-0.5 text-xs text-jb-subtle">Off</span>
-        {% endif %}
-      </div>
-      <p class="mt-1.5 text-[13px] text-jb-muted">{{ m.description }}</p>
-      {% if m.toggleable and m.problems %}
-        <p class="mt-2 text-xs text-amber-300">Needs setup: {{ m.problems | length }} step{{ 's' if m.problems | length != 1 }} left</p>
+<section class="mt-8" aria-labelledby="modules-heading">
+  <h2 id="modules-heading" class="jb-label-caps">Modules</h2>
+  <div class="mt-3 grid gap-4 xl:grid-cols-2">
+    {% for m in modules %}
+      {% if m.has_page %}
+      <a href="/servers/{{ guild.id }}/{{ m.name }}" class="jb-card jb-card-hover flex flex-col p-5">
+      {% else %}
+      <div class="jb-card flex flex-col p-5">
       {% endif %}
-    {% if m.has_page %}
-    </a>
-    {% else %}
-      <p class="mt-2 text-xs text-jb-subtle">Switch it on or off under <a href="/servers/{{ guild.id }}/general" class="underline">General</a>.</p>
-    </div>
-    {% endif %}
-  {% endfor %}
-</div>
+        <div class="flex items-start gap-4">
+          <span class="jb-icon-tile">{{ i.icon(module_icons.get(m.name, "box")) }}</span>
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 class="text-lg font-bold">{{ m.title }}</h3>
+              {% if not m.toggleable %}
+                <span class="jb-badge">Always on</span>
+              {% elif m.enabled %}
+                <span class="jb-badge jb-badge-ok jb-badge-dot">On</span>
+              {% else %}
+                <span class="jb-badge jb-badge-dot">Off</span>
+              {% endif %}
+            </div>
+            <p class="mt-1 text-sm text-jb-muted">{{ m.description }}</p>
+          </div>
+        </div>
+        {% if m.toggleable and m.problems %}
+          <div class="mt-4 rounded-md border border-jb-warn-line bg-jb-warn-soft p-3 text-sm">
+            <p class="font-semibold text-jb-warn">Needs setup: {{ m.problems | length }} step{{ 's' if m.problems | length != 1 }} left</p>
+            <ul class="mt-1.5 list-disc space-y-0.5 pl-5 text-jb-muted">
+              {% for problem in m.problems %}<li>{{ problem }}</li>{% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+      {% if m.has_page %}
+        <span class="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-jb-accent">Open settings {{ i.icon("arrow-right", "h-4 w-4") }}</span>
+      </a>
+      {% else %}
+        <p class="mt-4 text-sm text-jb-subtle">Switch it on or off under <a href="/servers/{{ guild.id }}/general" class="jb-link">General</a>.</p>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+</section>
 {% endblock %}

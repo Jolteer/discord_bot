@@ -1,44 +1,54 @@
 {% extends "base.html" %}
+{% import "_icons.html" as i %}
 {% block title %}My servers · JoltBot{% endblock %}
-{% macro server_icon(s) %}
-  {% if s.icon_url %}
-    <img src="{{ s.icon_url }}" alt="" class="h-10 w-10 rounded-full">
-  {% else %}
-    <div class="flex h-10 w-10 items-center justify-center rounded-full bg-jb-elevated text-sm font-bold text-jb-text">{{ s.initial }}</div>
-  {% endif %}
-{% endmacro %}
+{% block robots %}<meta name="robots" content="noindex">{% endblock %}
 {% block content %}
-<h1 class="text-xl font-bold tracking-tight">Your servers</h1>
-<p class="mt-1 text-sm text-jb-muted">Servers where you have Manage Server or Administrator, or a role that was given dashboard access.</p>
+<header class="max-w-2xl">
+  <h1 class="jb-page-title">Your servers</h1>
+  <p class="mt-2 text-jb-muted">Servers where you have Manage Server or Administrator, or a role that was given dashboard access.</p>
+</header>
 
-<h2 class="jb-section-label mt-6">JoltBot is here</h2>
-{% if joined %}
-  <div class="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-    {% for s in joined %}
-      <div class="jb-card flex items-center gap-3 p-3 transition duration-150 hover:border-jb-border-strong">
-        {{ server_icon(s) }}
-        <div class="min-w-0 flex-1 truncate text-sm font-medium">{{ s.name }}</div>
-        <a href="/servers/{{ s.id }}" class="jb-btn-primary px-3 py-1.5 text-xs">Manage</a>
-      </div>
-    {% endfor %}
-  </div>
-{% else %}
-  <p class="mt-3 text-sm text-jb-muted">None yet. Invite JoltBot to one of the servers below.</p>
-{% endif %}
+<section class="mt-10" aria-labelledby="joined-heading">
+  <h2 id="joined-heading" class="jb-label-caps flex items-center gap-2">
+    <span class="h-2 w-2 rounded-full bg-jb-ok"></span> JoltBot is here
+  </h2>
+  {% if joined %}
+    {# The server switcher on the dashboard loads this list by its id. #}
+    <div id="joined-servers" class="jb-server-list mt-4">
+      {% for s in joined %}
+        <a href="/servers/{{ s.id }}" class="jb-card jb-card-hover jb-server">
+          {{ i.avatar(s.icon_url, s.initial, "h-11 w-11 text-base", server=True) }}
+          <span class="min-w-0 flex-1 truncate font-semibold">{{ s.name }}</span>
+          <span class="jb-server-action jb-btn jb-btn-primary jb-btn-sm">Manage</span>
+        </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="jb-empty mt-4">
+      <span class="jb-empty-icon">{{ i.icon("server", "h-6 w-6") }}</span>
+      <p class="font-semibold">JoltBot isn't in any of your servers yet</p>
+      <p class="max-w-sm text-sm text-jb-muted">Add it to one of the servers below, then come back and reload this page.</p>
+    </div>
+  {% endif %}
+</section>
 
-<h2 class="jb-section-label mt-8">Not added yet</h2>
-{% if not_joined %}
-  <div class="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-    {% for s in not_joined %}
-      <div class="flex items-center gap-3 rounded-[10px] border border-jb-border bg-jb-surface/60 p-3 transition duration-150 hover:border-jb-border-strong">
-        {{ server_icon(s) }}
-        <div class="min-w-0 flex-1 truncate text-sm font-medium text-jb-muted">{{ s.name }}</div>
-        <a href="{{ s.invite_url }}" class="jb-btn-secondary px-3 py-1.5 text-xs">Invite JoltBot</a>
-      </div>
-    {% endfor %}
-  </div>
-  <p class="mt-3 text-xs text-jb-subtle">After inviting, come back and reload this page.</p>
-{% else %}
-  <p class="mt-3 text-sm text-jb-muted">Nothing here.</p>
-{% endif %}
+<section class="mt-12" aria-labelledby="not-joined-heading">
+  <h2 id="not-joined-heading" class="jb-label-caps flex items-center gap-2">
+    <span class="h-2 w-2 rounded-full bg-jb-subtle"></span> Not added yet
+  </h2>
+  {% if not_joined %}
+    <div class="jb-server-list mt-4">
+      {% for s in not_joined %}
+        <div class="jb-server rounded-lg border border-dashed border-jb-line-strong">
+          <span class="opacity-70">{{ i.avatar(s.icon_url, s.initial, "h-11 w-11 text-base", server=True) }}</span>
+          <span class="min-w-0 flex-1 truncate font-medium text-jb-muted">{{ s.name }}</span>
+          <a href="{{ s.invite_url }}" class="jb-btn jb-btn-secondary jb-btn-sm">Invite JoltBot</a>
+        </div>
+      {% endfor %}
+    </div>
+    <p class="mt-4 text-sm text-jb-subtle">After inviting, come back and reload this page.</p>
+  {% else %}
+    <p class="mt-4 text-sm text-jb-muted">There are no other servers you manage.</p>
+  {% endif %}
+</section>
 {% endblock %}
