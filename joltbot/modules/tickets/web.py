@@ -15,6 +15,7 @@ from ...web.rendering import render
 from ...web.routes.guild import guild_context
 from ...web.security import CsrfProtected, GuildAccess, RequireGuild, get_db, get_discord
 from .forms import (
+    choice_rows,
     foreign_id_errors,
     form_options,
     message_fields,
@@ -62,6 +63,7 @@ async def _render_form(
             "enabled": enabled,
             "version": version,
             "questions": questions,
+            "choices": choice_rows(values),
             "extras": extras,
             "messages": message_fields(values.get("messages") or {}),
             "errors": errors,

@@ -18,6 +18,9 @@ from .settings import PLACEHOLDERS, TicketMessages, TicketSettings
 
 MAX_QUESTIONS = 5
 BLANK_EXTRA_ROWS = 3  # empty rows shown so admins can add extra role choices
+MAX_CHOICE_QUESTIONS = 4  # same limits as ChoiceQuestion / TicketSettings.choice_questions
+MAX_CHOICE_OPTIONS = 10
+BLANK_OPTION_ROWS = 3  # empty option rows shown under each dropdown question
 
 FIELD_LABELS = {
     "staff_role_ids": "Staff roles",
@@ -30,6 +33,7 @@ FIELD_LABELS = {
     "extra_role_choices": "Extra role choices",
     "ping_role_ids": "Ping roles",
     "form_questions": "Application questions",
+    "choice_questions": "Dropdown questions",
     "delete_delay_seconds": "Delete delay",
     "messages": "Messages",
 }
@@ -87,6 +91,20 @@ def parse_form(form: Any) -> dict[str, Any]:
                     "max_length": _text(form, f"q_max_{i}") or "200",
                 }
             )
+    # Dropdown questions: c_label_<question>, c_required_<question>, and per option
+    # c_opt_label_<question>_<option> + c_opt_role_<question>_<option>. A question whose
+    # name was cleared is dropped, options and all (that is how one is removed).
+    choices = []
+    for q in range(MAX_CHOICE_QUESTIONS):
+        label = _text(form, f"c_label_{q}")
+        if not label:
+            continue
+        options = []
+        for o in range(MAX_CHOICE_OPTIONS):
+            option_label, role_id = _text(form, f"c_opt_label_{q}_{o}"), _text(form, f"c_opt_role_{q}_{o}")
+            if option_label or role_id:
+                options.append({"label": option_label, "role_id": role_id or None})
+        choices.append({"label": label, "required": f"c_required_{q}" in form, "options": options})
     extras = []
     i = 0
     while f"extra_label_{i}" in form and i < 40:
@@ -111,6 +129,7 @@ def parse_form(form: Any) -> dict[str, Any]:
         "ping_enabled": "ping_enabled" in form,
         "ping_role_ids": _ids(form, "ping_role_ids"),
         "form_questions": questions,
+        "choice_questions": choices,
         "require_attachment": "require_attachment" in form,
         "delete_delay_seconds": _text(form, "delete_delay_seconds") or "10",
         "reupload_attachments": "reupload_attachments" in form,
@@ -139,7 +158,13 @@ def validation_errors(exc: ValidationError) -> list[str]:
             where = f"Question {int(loc[1]) + 1}"
         elif loc[:1] == ["extra_role_choices"] and len(loc) > 1 and loc[1].isdigit():
             where = f"Extra role choice {int(loc[1]) + 1}"
+        elif loc[:1] == ["choice_questions"] and len(loc) > 1 and loc[1].isdigit():
+            where = f"Dropdown question {int(loc[1]) + 1}"
+            if loc[2:3] == ["options"] and len(loc) > 3 and loc[3].isdigit():
+                where += f", option {int(loc[3]) + 1}"
         message = err["msg"].removeprefix("Value error, ")
+        if loc[:1] == ["choice_questions"] and loc[2:] == ["options"] and err["type"] == "too_short":
+            message = "needs at least 2 options"
         errors.append(f"{where}: {message}")
     return errors
 
@@ -351,3 +376,27 @@ def padded_rows(values: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict
     extras = list(values.get("extra_role_choices") or [])
     extras += [{"label": "", "role_id": "", "emoji": ""}] * min(BLANK_EXTRA_ROWS, 24 - len(extras))
     return questions[:MAX_QUESTIONS], extras
+
+
+def choice_rows(values: dict[str, Any]) -> list[dict[str, Any]]:
+    """Dropdown questions for the form: the saved ones, then one empty block to add another.
+
+    Each question gets a few empty option rows as well. Saving makes more
+    appear, up to the limits, the same way extra role choices work.
+
+    Args:
+        values: Settings values (saved, or as typed when a save failed).
+
+    Returns:
+        At most ``MAX_CHOICE_QUESTIONS`` blocks of ``{"label", "required", "options"}``.
+    """
+    blank_option = {"label": "", "role_id": ""}
+    blocks = []
+    for question in list(values.get("choice_questions") or [])[:MAX_CHOICE_QUESTIONS]:
+        options = list(question.get("options") or [])[:MAX_CHOICE_OPTIONS]
+        options += [blank_option] * min(BLANK_OPTION_ROWS, MAX_CHOICE_OPTIONS - len(options))
+        required = question.get("required", True)
+        blocks.append({"label": question.get("label", ""), "required": required, "options": options})
+    if len(blocks) < MAX_CHOICE_QUESTIONS:
+        blocks.append({"label": "", "required": True, "options": [blank_option] * BLANK_OPTION_ROWS})
+    return blocks

@@ -591,10 +591,17 @@ def _granting(field):
     """Form fields that make JoltBot give out the Moderator role in the given way."""
     if field == "extra":
         return {"extra_label_0": "Mods", "extra_role_0": str(MOD_ROLE)}
+    if field == "dropdown":
+        return {
+            "c_label_0": "Team",
+            "c_opt_label_0_0": "Mods",
+            "c_opt_role_0_0": str(MOD_ROLE),
+            "c_opt_label_0_1": "No team",
+        }
     return {field: str(MOD_ROLE)}
 
 
-@pytest.mark.parametrize("field", ["accept_role_ids", "pending_role_id", "extra"])
+@pytest.mark.parametrize("field", ["accept_role_ids", "pending_role_id", "extra", "dropdown"])
 async def test_manage_server_alone_cannot_make_the_bot_give_out_a_powerful_role(db, alice, mod_role, field):
     """Otherwise someone who can't assign roles in Discord could get one through JoltBot."""
     csrf = await csrf_of(alice)
@@ -608,7 +615,7 @@ async def test_manage_server_alone_cannot_make_the_bot_give_out_a_powerful_role(
     assert (await tickets_state(db, GUILD_A)).version == version  # nothing saved
 
 
-@pytest.mark.parametrize("field", ["accept_role_ids", "pending_role_id", "extra"])
+@pytest.mark.parametrize("field", ["accept_role_ids", "pending_role_id", "extra", "dropdown"])
 async def test_an_administrator_can_and_the_page_keeps_warning_about_it(db, dave, mod_role, field):
     csrf = await csrf_of(dave)
     version = (await tickets_state(db, GUILD_A)).version
@@ -744,3 +751,59 @@ async def test_a_module_without_a_page_can_be_switched_on_under_general(db, alic
     assert (await alice.post(f"/servers/{GUILD_A}/general", data=form)).status_code == 303
     async with db.session() as session:
         assert (await load_module(session, GUILD_A, "hello")).enabled is True
+
+
+# --------------------------------------------------------------------------- dropdown questions
+
+
+def _troop_question(role_id):
+    """Form fields for one dropdown question whose first option gives a role."""
+    return {
+        "c_label_0": "Troop type",
+        "c_required_0": "on",
+        "c_opt_label_0_0": "Infantry",
+        "c_opt_role_0_0": str(role_id),
+        "c_opt_label_0_1": "Not sure yet",
+    }
+
+
+async def test_dropdown_questions_are_saved_and_shown_again(db, alice):
+    csrf = await csrf_of(alice)
+    form = ticket_form(GUILD_A, csrf, 1, extra=_troop_question(ROLE[GUILD_A]))
+    assert (await alice.post(f"/servers/{GUILD_A}/tickets", data=form)).status_code == 303
+
+    (question,) = (await tickets_state(db, GUILD_A)).config.choice_questions
+    assert question.label == "Troop type" and question.required is True
+    assert [(o.label, o.role_id) for o in question.options] == [("Infantry", ROLE[GUILD_A]), ("Not sure yet", None)]
+
+    page = (await alice.get(f"/servers/{GUILD_A}/tickets")).text
+    assert 'name="c_label_0" value="Troop type"' in page
+    assert 'name="c_opt_label_0_1" value="Not sure yet"' in page
+    assert 'name="c_label_1" value=""' in page  # an empty block to add the next question
+
+
+async def test_a_dropdown_role_from_another_server_is_refused(db, alice):
+    csrf = await csrf_of(alice)
+    form = ticket_form(GUILD_A, csrf, 1, extra=_troop_question(ROLE[GUILD_B]))
+    r = await alice.post(f"/servers/{GUILD_A}/tickets", data=form)
+    assert r.status_code == 400 and "Dropdown questions: a selected role isn't in this server" in html.unescape(r.text)
+    assert (await tickets_state(db, GUILD_A)).config.choice_questions == []
+
+
+async def test_a_dropdown_question_needs_two_options_and_the_form_keeps_what_was_typed(db, alice):
+    csrf = await csrf_of(alice)
+    fields = {"c_label_0": "Troop type", "c_opt_label_0_0": "Infantry"}
+    r = await alice.post(f"/servers/{GUILD_A}/tickets", data=ticket_form(GUILD_A, csrf, 1, extra=fields))
+    page = html.unescape(r.text)
+    assert r.status_code == 400 and "Dropdown question 1: needs at least 2 options" in page
+    assert 'name="c_opt_label_0_0" value="Infantry"' in r.text
+
+
+async def test_clearing_a_dropdown_questions_name_removes_it(db, alice):
+    csrf = await csrf_of(alice)
+    form = ticket_form(GUILD_A, csrf, 1, extra=_troop_question(ROLE[GUILD_A]))
+    assert (await alice.post(f"/servers/{GUILD_A}/tickets", data=form)).status_code == 303
+
+    form = ticket_form(GUILD_A, csrf, 2, extra={**_troop_question(ROLE[GUILD_A]), "c_label_0": ""})
+    assert (await alice.post(f"/servers/{GUILD_A}/tickets", data=form)).status_code == 303
+    assert (await tickets_state(db, GUILD_A)).config.choice_questions == []

@@ -141,7 +141,14 @@ Key rules (see `modules/tickets/service.py` and `store.py`):
 - `claim()` is a conditional UPDATE; only one worker wins.
 - Failures after claim should `release` or finish finalize so tickets do not stick.
 - Recovery every 5 minutes resumes stuck `closing` tickets, missing channels, etc.
-- Channel is not deleted if the log post failed (preserve evidence).
+- Channel is not deleted if the log post failed (preserve evidence). Recovery
+  posts the log again once the log channel works, then deletes the channel.
+- Dropdown questions (`TicketSettings.choice_questions`) are asked in a private
+  message before the form. A pick is stored with the answers as a `role_id`,
+  but it is only a request: on accept, a role is given only if it is still an
+  option's role in the current settings (`TicketSettings.picked_roles`).
+- `TicketSettings.assignable_roles()` is the one list of roles JoltBot gives.
+  Role-order checks, diagnostics and the dashboard's powerful-role rule all read it.
 
 ## Dashboard auth and access control
 

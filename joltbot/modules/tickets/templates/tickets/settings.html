@@ -97,6 +97,34 @@
                   values.require_attachment) }}
   {% endcall %}
 
+  {% call f.section("Dropdown questions (optional)", "Applicants answer these by picking from a list, before the form. An option can give a role when the ticket is accepted. Up to 4 questions. Clear a question's name to remove it.") %}
+    {% for q in choices %}
+      {% set qi = loop.index0 %}
+      <div class="rounded-[10px] border border-jb-border p-3">
+        <div class="flex flex-wrap items-center gap-4">
+          <input name="c_label_{{ qi }}" value="{{ q.label }}" placeholder="Question {{ loop.index }}, e.g. Team" maxlength="45"
+                 class="jb-input max-w-sm">
+          {{ f.checkbox("c_required_" ~ qi, "Required", q.required) }}
+        </div>
+        <div class="mt-2 space-y-2">
+          {% for opt in q.options %}
+            <div class="grid grid-cols-2 gap-2">
+              <input name="c_opt_label_{{ qi }}_{{ loop.index0 }}" value="{{ opt.label }}" placeholder="Option {{ loop.index }}" maxlength="100"
+                     class="jb-input">
+              <select name="c_opt_role_{{ qi }}_{{ loop.index0 }}" class="jb-input">
+                <option value="">(no role)</option>
+                {% for r in roles if not r.managed %}
+                  <option value="{{ r.id }}" {{ 'selected' if r.id == opt.role_id }}>{{ r.name }}{{ ' (above JoltBot)' if not r.assignable }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+    <p class="text-xs text-jb-muted">Each question needs at least 2 options. Save to get more empty rows (up to 10 options per question). Roles are given together with the roles above when staff accept the ticket.</p>
+  {% endcall %}
+
   {% call f.section("Messages", "Placeholders like {user} and {server} are filled in automatically. The preview updates as you type.") %}
     {% for m in messages %}
       <div class="grid gap-3 lg:grid-cols-2">
