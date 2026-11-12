@@ -267,6 +267,9 @@ async def set_kicked(db: Database, ticket_id: int) -> None:
 async def add_note(db: Database, ticket_id: int, note: str) -> None:
     """Append a line to the ticket's notes (shown on the log embed).
 
+    A note the ticket already has is not added again, so work that is retried
+    (see ``TicketManager.recover``) doesn't repeat itself in the log.
+
     Args:
         db: Shared database.
         ticket_id: Ticket primary key.
@@ -274,7 +277,7 @@ async def add_note(db: Database, ticket_id: int, note: str) -> None:
     """
     async with db.session() as session, session.begin():
         ticket = await session.get(Ticket, ticket_id)
-        if ticket is not None:
+        if ticket is not None and note not in ticket.note_lines:
             ticket.notes = f"{ticket.notes}\n{note}" if ticket.notes else note
 
 

@@ -294,11 +294,11 @@ class TicketManager:
         member = await self._get_member(guild, ticket.user_id)
         if member is None:
             return "The applicant is no longer in the server. Use 🔒 Close instead."
-        accept_roles = roles_by_id(guild, ctx.settings.accept_role_ids)
-        if not accept_roles:
+        if not roles_by_id(guild, ctx.settings.accept_role_ids):
             return "None of the 'role given on accept' roles exist any more. Fix this on the dashboard."
+        roles = self._roles_for_accept(guild, ctx, extra_role.id if extra_role else None)
         pending = guild.get_role(ctx.settings.pending_role_id or 0)
-        if problems := hierarchy_problems(guild, [r for r in (*accept_roles, pending, extra_role) if r]):
+        if problems := hierarchy_problems(guild, [*roles, *([pending] if pending else [])]):
             return "\n".join(problems)
 
         self._busy.add(ticket.id)
@@ -314,7 +314,7 @@ class TicketManager:
             reason = f"Application accepted by {staff} (ticket #{ticket.id})"
             try:
                 # Add first, then remove: if removal fails they keep access instead of being locked out.
-                await member.add_roles(*accept_roles, *([extra_role] if extra_role else []), reason=reason)
+                await member.add_roles(*roles, reason=reason)
                 if pending and pending in member.roles:
                     await member.remove_roles(pending, reason=reason)
             except discord.Forbidden:
@@ -335,6 +335,69 @@ class TicketManager:
             self._busy.discard(ticket.id)
         self._spawn(self.finalize(ticket.id))
         return None
+
+    def _roles_for_accept(
+        self, guild: discord.Guild, ctx: TicketContext, extra_role_id: int | None
+    ) -> list[discord.Role]:
+        """Every role an accept gives: the server's accept roles plus the extra role staff picked.
+
+        Used by ``accept`` and by ``_confirm_accept_roles``, so an accept that
+        is finished after a restart gives exactly the same roles.
+
+        Args:
+            guild: Guild owning the ticket.
+            ctx: Fresh ticket settings for the guild.
+            extra_role_id: The extra role chosen on Accept, if any.
+
+        Returns:
+            The roles that still exist, without repeats.
+        """
+        role_ids = [*ctx.settings.accept_role_ids, *([extra_role_id] if extra_role_id else [])]
+        return roles_by_id(guild, dict.fromkeys(role_ids))
+
+    async def _confirm_accept_roles(self, guild: discord.Guild, ctx: TicketContext, ticket: Ticket) -> None:
+        """Finish the member's side of an accept that was cut short.
+
+        The decision is saved before any role is given. If the bot stopped in
+        between (a restart or an update), the ticket would otherwise be logged
+        as accepted while the member got nothing. Giving a role twice is
+        harmless, so this just makes sure. Anything it can't do becomes a note
+        on the ticket, which the log shows.
+
+        Args:
+            guild: Guild owning the ticket.
+            ctx: Fresh ticket settings for the guild.
+            ticket: A ticket in ``closing`` with outcome ``accepted``.
+        """
+        unconfirmed = "Roles could not be confirmed after a restart; check this member."
+        try:
+            member = await self._get_member(guild, ticket.user_id)
+        except (discord.HTTPException, OSError):
+            await store.add_note(self.db, ticket.id, unconfirmed)
+            return
+        if member is None:
+            await store.add_note(
+                self.db, ticket.id, "The applicant is no longer in the server; their roles were not checked."
+            )
+            return
+        missing = [r for r in self._roles_for_accept(guild, ctx, ticket.extra_role_id) if r not in member.roles]
+        pending = guild.get_role(ctx.settings.pending_role_id or 0)
+        reason = f"Application accepted (ticket #{ticket.id}); finished after a restart"
+        try:
+            if missing:
+                await member.add_roles(*missing, reason=reason)
+            if pending and pending in member.roles:
+                await member.remove_roles(pending, reason=reason)
+        except (discord.HTTPException, OSError) as e:
+            log.warning("Guild %s: couldn't confirm roles for ticket #%s: %s", guild.id, ticket.id, e)
+            await store.add_note(self.db, ticket.id, unconfirmed)
+            return
+        if missing:
+            # The accept never got as far as the roles, so the welcome DM wasn't sent either.
+            await store.add_note(self.db, ticket.id, "Roles were given after a restart.")
+            extra_role = guild.get_role(ticket.extra_role_id or 0)
+            if not await self._dm(member, embeds.welcome_dm(ctx.settings, guild, member, extra_role)):
+                await store.add_note(self.db, ticket.id, "Welcome DM failed (applicant's DMs are closed).")
 
     async def deny(
         self, guild: discord.Guild, staff: discord.Member, ticket: Ticket, reason: str, kick: bool
@@ -472,6 +535,8 @@ class TicketManager:
         if guild is None or guild.unavailable:
             return  # retried later by recover()
         ctx = await load_context(self.bot, guild.id)
+        if resumed and ticket.outcome == "accepted":
+            await self._confirm_accept_roles(guild, ctx, ticket)
         channel = guild.get_channel(ticket.channel_id) if ticket.channel_id else None
         if not isinstance(channel, discord.TextChannel):
             channel = None

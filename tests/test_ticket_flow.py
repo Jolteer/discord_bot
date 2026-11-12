@@ -5,14 +5,18 @@ them. Everything runs against fake Discord objects (tests/fakes.py) and a real
 SQLite file, so no network or bot token is needed.
 """
 
+from datetime import timedelta
 from types import SimpleNamespace
 
 import discord
 import pytest
+from sqlalchemy import update
 
+from joltbot.core.models import Ticket
+from joltbot.core.types import utcnow
 from joltbot.modules.tickets import store
 from joltbot.modules.tickets.context import load_context
-from joltbot.modules.tickets.service import DISCORD_TROUBLE, TicketManager
+from joltbot.modules.tickets.service import DISCORD_TROUBLE, STUCK_AFTER_SECONDS, TicketManager
 from joltbot.modules.tickets.views import (
     NOT_SET_UP,
     AcceptView,
@@ -573,3 +577,67 @@ async def test_an_unlogged_ticket_whose_channel_is_gone_is_not_posted_late(world
 
     assert ticket.channel_gone is True and ticket.logged is False
     world.log.send.assert_not_awaited()
+
+
+# ------------------------------------------------------------------ an accept cut short by a restart
+
+
+async def _accept_cut_short(world, **claim):
+    """The decision was saved, then the bot stopped before it gave any role. Returns the ticket."""
+    ticket, _ = await _open(world)
+    assert await store.claim(world.db, ticket.id, outcome="accepted", handled_by=STAFF_ID, **claim)
+    long_ago = utcnow() - timedelta(seconds=STUCK_AFTER_SECONDS + 60)
+    async with world.db.session() as session, session.begin():
+        await session.execute(update(Ticket).where(Ticket.id == ticket.id).values(claimed_at=long_ago))
+    return ticket
+
+
+async def test_an_accept_cut_short_by_a_restart_still_gives_the_roles(world):
+    ticket = await _accept_cut_short(world, extra_role_id=EXTRA_ROLE)
+
+    await world.manager.recover(world.guild)
+    ticket = await _reload(world, ticket)
+
+    assert world.roles.accept in world.applicant.roles and world.roles.extra in world.applicant.roles
+    assert world.roles.pending not in world.applicant.roles
+    world.applicant.send.assert_awaited_once()  # the welcome DM they never got
+    assert ticket.status == "closed" and ticket.outcome == "accepted"
+    assert "Roles were given after a restart." in ticket.note_lines
+
+
+async def test_resuming_a_finished_accept_changes_nothing_for_the_member(world):
+    # Roles and DM went out; only the transcript and log were still to do.
+    ticket = await _accept_cut_short(world)
+    await world.applicant.add_roles(world.roles.accept)
+    await world.applicant.remove_roles(world.roles.pending)
+    world.applicant.add_roles.reset_mock()
+
+    await world.manager.recover(world.guild)
+    ticket = await _reload(world, ticket)
+
+    world.applicant.add_roles.assert_not_awaited()
+    world.applicant.send.assert_not_awaited()
+    assert ticket.status == "closed" and ticket.note_lines == []
+
+
+async def test_roles_that_cannot_be_confirmed_after_a_restart_are_noted_in_the_log(world):
+    ticket = await _accept_cut_short(world)
+    world.applicant.add_roles.side_effect = http_error(discord.Forbidden, 403)
+
+    await world.manager.recover(world.guild)
+    ticket = await _reload(world, ticket)
+
+    assert ticket.status == "closed"
+    notes = _fields(world.log.send.await_args_list[0].kwargs["embed"])["Notes"]
+    assert "could not be confirmed after a restart" in notes
+
+
+async def test_an_accepted_applicant_who_left_before_the_restart_is_noted(world):
+    ticket = await _accept_cut_short(world)
+    world.guild.remove_member(APPLICANT_ID)
+
+    await world.manager.recover(world.guild)
+    ticket = await _reload(world, ticket)
+
+    assert ticket.status == "closed"
+    assert any("no longer in the server" in note for note in ticket.note_lines)
