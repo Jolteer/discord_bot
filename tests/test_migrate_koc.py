@@ -11,21 +11,21 @@ from joltbot.core.models import BotMeta, PanelMessage, Ticket
 from joltbot.core.templating import placeholders_in
 from scripts.migrate_koc import MigrationError, migrate
 
-GUILD = "1546302999721156778"
+GUILD = "900000000000000001"
 
 OLD_CONFIG = {
     "guild_id": GUILD,
     "roles": {
-        "approval": {"King": "1566223380842156102", "R4": "1560102429809319997", "Mod": "1556478951319408662"},
-        "unverified": "1568401515268284518",
-        "member": "1568405325097340948",
+        "approval": {"King": "900000000000000011", "R4": "900000000000000012", "Mod": "900000000000000013"},
+        "unverified": "900000000000000021",
+        "member": "900000000000000022",
         "alliances": [],
     },
     "channels": {
-        "verify": "1562598789313990706",
-        "welcome": "1562299824026558597",
-        "tickets_category": "1568669050245222521",
-        "ticket_logs": "1568669290218135684",
+        "verify": "900000000000000031",
+        "welcome": "900000000000000032",
+        "tickets_category": "900000000000000033",
+        "ticket_logs": "900000000000000034",
     },
     "ping_on_new_ticket": {"enabled": True, "role_ids": []},
     "tickets": {"delete_delay_seconds": 10, "reupload_attachments": True},
@@ -83,7 +83,7 @@ def old_files(tmp_path):
                 int(status == "closed"),
             ),
         )
-    conn.execute("INSERT INTO settings VALUES ('verify_panel', '1562598789313990706:777')")
+    conn.execute("INSERT INTO settings VALUES ('verify_panel', '900000000000000031:777')")
     conn.commit()
     conn.close()
     return config, old_db
@@ -103,10 +103,10 @@ async def test_migration_seeds_settings_and_tickets(db, old_files):
 
     s = state.config
     assert state.enabled is True
-    assert s.staff_role_ids == [1566223380842156102, 1560102429809319997, 1556478951319408662]
+    assert s.staff_role_ids == [900000000000000011, 900000000000000012, 900000000000000013]
     assert s.allow_administrators is False
-    assert s.pending_role_id == 1568401515268284518 and s.accept_role_ids == [1568405325097340948]
-    assert s.panel_channel_id == 1562598789313990706 and s.log_channel_id == 1568669290218135684
+    assert s.pending_role_id == 900000000000000021 and s.accept_role_ids == [900000000000000022]
+    assert s.panel_channel_id == 900000000000000031 and s.log_channel_id == 900000000000000034
     assert s.messages.panel_title == "📝 King of Chaos Verification"  # their custom text
     assert s.messages.not_staff == "Only King, R4s, and Mods can do this."
     assert [q.label for q in s.form_questions][0] == "Governor name"
@@ -119,7 +119,7 @@ async def test_migration_seeds_settings_and_tickets(db, old_files):
     assert [t.id for t in tickets] == [1, 2]  # same ticket numbers
     assert tickets[0].answers[0] == {"label": "Governor name", "value": "Gov"}
     assert tickets[1].status == "open" and tickets[1].channel_id == 5002
-    assert (panel.channel_id, panel.message_id) == (1562598789313990706, 777)
+    assert (panel.channel_id, panel.message_id) == (900000000000000031, 777)
     assert clear.value == GUILD
 
 

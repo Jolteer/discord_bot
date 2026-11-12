@@ -1,6 +1,6 @@
 """The ticket store and the recovery that fixes the old bot's "stuck until restart" bugs.
 
-These use tiny fake Discord objects, so no network or bot token is needed.
+These use tiny fake Discord objects (tests/fakes.py), so no network or bot token is needed.
 """
 
 import asyncio
@@ -14,36 +14,8 @@ from joltbot.modules.tickets import store
 from joltbot.modules.tickets.service import STUCK_AFTER_SECONDS, TicketManager
 
 from .conftest import GUILD_A, GUILD_B
-
-
-class FakeGuild:
-    def __init__(self, guild_id, channels=(), members=()):
-        self.id = guild_id
-        self.unavailable = False
-        self._channels = set(channels)
-        self._members = set(members)
-
-    def get_channel(self, channel_id):
-        return object() if channel_id in self._channels else None
-
-    def get_member(self, user_id):
-        return object() if user_id in self._members else None
-
-
-class FakeBot:
-    def __init__(self, db, guilds):
-        self.db = db
-        self._guilds = {g.id: g for g in guilds}
-        self.issues = []
-
-    def get_guild(self, guild_id):
-        return self._guilds.get(guild_id)
-
-    async def report_issue(self, guild_id, key, message):
-        self.issues.append((guild_id, key))
-
-    async def resolve_issue(self, guild_id, key):
-        pass
+from .fakes import FakeBot, FakeGuild
+from .fakes import settle as _settle
 
 
 async def _reserve(db, guild_id=GUILD_A, user_id=1):
@@ -57,11 +29,6 @@ async def _age(db, ticket_id, **columns):
     old = utcnow() - timedelta(seconds=STUCK_AFTER_SECONDS + 60)
     async with db.session() as session, session.begin():
         await session.execute(update(Ticket).where(Ticket.id == ticket_id).values(**{c: old for c in columns}))
-
-
-async def _settle(manager):
-    while manager._tasks:
-        await asyncio.gather(*list(manager._tasks))
 
 
 async def test_one_active_ticket_per_member(db, two_guilds):

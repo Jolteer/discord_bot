@@ -14,13 +14,13 @@ def test_defaults_are_valid_and_need_setup():
 
 def test_ids_accept_strings_and_are_saved_as_strings():
     settings = TicketSettings.model_validate(
-        {"staff_role_ids": ["1566223380842156102"], "log_channel_id": "1568669290218135684"}
+        {"staff_role_ids": ["900000000000000011"], "log_channel_id": "900000000000000034"}
     )
-    assert settings.staff_role_ids == [1566223380842156102]
+    assert settings.staff_role_ids == [900000000000000011]
     dumped = settings.model_dump(mode="json")
     # Strings in JSON so a browser can't round the number to a different ID.
-    assert dumped["staff_role_ids"] == ["1566223380842156102"]
-    assert dumped["log_channel_id"] == "1568669290218135684"
+    assert dumped["staff_role_ids"] == ["900000000000000011"]
+    assert dumped["log_channel_id"] == "900000000000000034"
 
 
 def test_empty_form_value_means_no_channel():
