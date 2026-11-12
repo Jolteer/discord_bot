@@ -9,7 +9,8 @@
 #   15 3 * * * /home/botuser/joltbot/deploy/backup.sh >> /home/botuser/joltbot-backups/backup.log 2>&1
 #
 # The backup contains every server's settings and tickets, but no dashboard login
-# sessions (see scripts/backup.py). Backups older than KEEP_DAYS days are deleted.
+# sessions (see scripts/backup.py). Backups older than KEEP_DAYS days (7 unless you
+# set it) are deleted.
 # These files live on the same server as JoltBot: copy them somewhere else too
 # (see the README) if you want to survive losing the server.
 set -euo pipefail
@@ -17,7 +18,7 @@ umask 077 # backups are readable by this user only
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 BACKUP_DIR="${BACKUP_DIR:-$HOME/joltbot-backups}"
-KEEP_DAYS="${KEEP_DAYS:-14}"
+KEEP_DAYS="${KEEP_DAYS:-7}"
 mkdir -p "$BACKUP_DIR"
 
 target="$BACKUP_DIR/joltbot-$(date -u +%Y%m%d-%H%M%S).db.gz"

@@ -11,7 +11,7 @@ JoltBot runs as **two processes** that share one SQLite database:
 
 > **Deploying:** Docker Compose is the main way to run JoltBot in production (section 7). The systemd setup in section 7.4 is kept as a fallback for running without Docker.
 
-**Also see:** [CONTRIBUTING.md](CONTRIBUTING.md) (style, PRs, adding modules) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (startup, routing, storage)
+**Also see:** [CONTRIBUTING.md](CONTRIBUTING.md) (style, PRs, adding modules) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (startup, routing, storage) · [DEPLOYMENT.md](DEPLOYMENT.md) (how the live server is set up, updated and restored)
 
 ---
 
@@ -19,6 +19,7 @@ JoltBot runs as **two processes** that share one SQLite database:
 
 - **Multi-server bot** with per-guild settings stored in SQLite (no restart to apply dashboard changes)
 - **Web dashboard** — Discord OAuth login, server picker, module settings, audit log, dismissible bot issues
+- **Dashboard access roles** — let your moderators use a server's dashboard without giving them Manage Server (section 6)
 - **Notices channel** — optionally, each server gets new problems posted once in a channel of its choice
 - **Tickets & verification**
   1. New members click **Open Application** and answer the server's own questions (up to 5 typed, plus up to 4 dropdowns whose options can each give a role on accept)
@@ -316,6 +317,22 @@ These steps are the same for every server, and each server's settings are its ow
 
 The `/tickets` commands are only visible to members with **Manage Server** by default. To let other roles see them, go to **Server Settings → Integrations → JoltBot**. Members with a staff role can also run `panel` and `diagnostics`; `grant-existing` always needs Manage Server.
 
+### Letting moderators use the dashboard
+
+By default only the owner and members with **Manage Server** or **Administrator** can open a server's dashboard. To let others in without giving them those permissions:
+
+1. Open **Dashboard → Dashboard access** (only managers see this page).
+2. Tick the role or roles, for example `Moderator`, and save.
+
+Anyone holding one of those roles can now log in, sees the server in their list, and can change JoltBot's settings there. What they **cannot** do:
+
+- open or change the Dashboard access page;
+- make JoltBot give out a role with moderation permissions, or one of the access roles themselves (only the owner or an Administrator can).
+
+To remove someone's access, take the role away from them in Discord (it stops working within a minute), or untick the role on the page (it stops at once). Every change to the list is in the **Audit log** with who made it.
+
+Give an access role only to people you would trust with every setting on the dashboard: they can, for example, change which roles count as ticket staff.
+
 ---
 
 ## 7. Deploying
@@ -525,7 +542,7 @@ docker compose up -d                                             # restart so bo
   ```
   15 3 * * * /home/botuser/joltbot/deploy/backup.sh >> /home/botuser/joltbot-backups/backup.log 2>&1
   ```
-- Backups older than 14 days are deleted. Change that or the folder with `KEEP_DAYS=30 BACKUP_DIR=/some/folder ./deploy/backup.sh`.
+- Backups older than 7 days are deleted. Change that or the folder with `KEEP_DAYS=30 BACKUP_DIR=/some/folder ./deploy/backup.sh`.
 - A backup holds every server's settings and tickets but **no dashboard logins**: sessions are removed from the copy, so the file never contains anyone's Discord login token. Keep the files private all the same.
 - A failed backup is logged at ERROR, so it reaches `ALERT_WEBHOOK_URL` if you set one.
 - The backups sit on the same server as JoltBot. To survive losing the server, also copy `~/joltbot-backups` elsewhere (for example `rsync` to another machine, or switch on Hetzner's server backups).
@@ -563,6 +580,8 @@ If you are going back because an update failed, the backup is from before that u
 | Login says "redirect_uri" is invalid | The Developer Portal redirect must be exactly `PUBLIC_BASE_URL/auth/callback`. |
 | Caddy can't get a certificate | DNS must point at the server, ports 80/443 must be open, and `DOMAIN` must be set in `.env`. |
 | Dashboard says JoltBot isn't in the server | Invite it from the server list, then reload. |
+| A moderator gets "Not allowed", or doesn't see the server | They need a role ticked under **Dashboard access** (section 6), and must hold it in Discord. A role given a moment ago can take up to a minute to count. |
+| "… gives access to this dashboard. Only the server owner or an Administrator can …" | The role you picked is a dashboard access role, so JoltBot giving it out would hand out dashboard access. Ask the owner or an Administrator to save it, or pick another role. |
 | Dashboard can't load roles/channels | The bot token in `.env` is wrong, or Discord is briefly down. Use **↻ Refresh**. |
 | New roles/channels don't show up in the dashboard | Click **↻ Refresh roles & channels** (it caches for 60 seconds). |
 | "… has powerful permissions … Only the server owner or an Administrator can …" | You have Manage Server but not Administrator, and the role you picked can kick, ban, manage roles or similar. Ask the owner or an Administrator to save that setting. Roles they already saved can stay. |
@@ -583,7 +602,7 @@ Short version:
 
 - **Per-server settings.** Each module has a Pydantic model with defaults (e.g. `modules/tickets/settings.py`), stored as JSON in `module_settings`. Unconfigured servers get defaults with the module **off**.
 - **Live changes.** The bot reads settings from the DB on every event — no restart, no settings cache.
-- **Dashboard access.** `web/security.py` checks Manage Server / Admin / owner with Discord before any guild DB lookup. Guild list cached 5 minutes (used for up to 30 minutes if Discord can't be reached, then server pages answer 503). Role/channel IDs in forms must belong to that server. Only the owner or an Administrator can make JoltBot give out a role with moderation or management permissions.
+- **Dashboard access.** `web/security.py` checks on every request that the user has Manage Server / Admin / owner, or holds one of the server's dashboard access roles (asked from Discord with the bot token, cached 60 seconds). People who aren't in the server are refused before any guild DB lookup. Guild list cached 5 minutes (used for up to 30 minutes if Discord can't be reached, then server pages answer 503). Role/channel IDs in forms must belong to that server. Only the owner or an Administrator can make JoltBot give out a role with moderation or management permissions, or a dashboard access role.
 - **Sessions and CSRF.** Cookie is opaque; DB stores HMAC of it. Discord OAuth access token is stored on the session (scopes `identify guilds` only). POSTs need CSRF; Origin must match when present.
 - **Reliability.** Bot startup retries; ticket recovery every 5 minutes; claim/release; dashboard "issues" for problems with no interaction to reply on.
 - **One dashboard worker.** In-memory Discord caches; single uvicorn worker by design.

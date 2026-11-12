@@ -157,18 +157,34 @@ Key rules (see `modules/tickets/service.py` and `store.py`):
 2. **Session**: opaque cookie token; DB stores HMAC-SHA256(`SESSION_SECRET`, token).
    Discord access token is stored on the session row (needed to refresh guild list).
 3. **CSRF**: per-session token on POSTs; Origin must match `PUBLIC_BASE_URL` when present.
-4. **Guild access** (`RequireGuild`): user must have Manage Server / Admin / owner
-   in Discord for that guild **before** any DB lookup of bot membership (avoids
-   leaking “is the bot here?”). Then the guild must exist and be `active`.
-5. Guild list cached up to 5 minutes; role/channel lists for forms cached ~60s
+4. **Guild access** (`RequireGuild`, `web/security.guild_access`), checked on every
+   request to a `/servers/{guild_id}/...` page. Two ways in:
+   - **Manager**: Manage Server / Admin / owner in Discord for that guild. Then
+     the guild must exist and be `active`.
+   - **Dashboard access role**: the user holds one of the guild's
+     `dashboard_role_ids` (General settings). Their current roles come from
+     `DiscordClient.member_role_ids` (bot token, `GET /guilds/{id}/members/{user}`),
+     cached 60 seconds per member. If Discord can't be asked, the answer is 503:
+     roles are never guessed.
+
+   Someone who is not a member of the guild gets 403 **before** any DB lookup
+   (avoids leaking “is the bot here?”), and a member without access gets the
+   same 403 whether or not the bot is there.
+5. **Who has access** (`RequireManager`): only a manager may open or save
+   `/servers/{guild_id}/access`. Saving goes through `save_module`, so every
+   change is in the audit log with who made it. The General form never changes
+   the list.
+6. Guild list cached up to 5 minutes; role/channel lists for forms cached ~60s
    (refresh button clears them).
    If Discord can't be reached, the cached guild list is used for up to 30
    minutes, then guild pages answer 503.
-6. **Powerful roles** (`forms.powerful_role_errors`): Manage Server is enough to
+7. **Powerful roles** (`forms.powerful_role_errors`): Manage Server is enough to
    use the dashboard, but only the owner or an Administrator may add a role with
    moderation/management permissions (`core/permissions.ELEVATED_PERMISSIONS`) as
    an accept, pending or extra role. In Discord, Manage Server alone can't assign
-   roles, so the bot must not become a way around that.
+   roles, so the bot must not become a way around that. A dashboard access role
+   counts as powerful too: otherwise someone let in by a role could have the bot
+   hand the same access to every accepted member.
 
 ## Data storage
 
