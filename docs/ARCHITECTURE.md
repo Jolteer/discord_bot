@@ -204,4 +204,7 @@ Guild-owned rows use `ON DELETE CASCADE` when a left guild is purged.
   `/health/bot`, the overview banner and the bot's Docker health check
   (`python -m joltbot.bot.healthcheck`). `/health` stays independent of the bot.
 - Optimistic concurrency on settings saves (`StaleSettingsError`).
+- Backups (`scripts/backup.py`, `deploy/backup.sh`): SQLite online backup, with
+  login sessions removed from the copy and an integrity check. `deploy/update.sh`
+  takes one before every update and stops the bot before migrations run.
 - Foreign role/channel IDs from other guilds rejected on ticket settings save.

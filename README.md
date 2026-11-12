@@ -98,8 +98,10 @@ joltbot/
 └── web/                  # dashboard process: app, routes/, login, security checks, templates, static files
 migrations/               # Alembic database migrations
 scripts/migrate_koc.py    # one-time King of Chaos migration
+scripts/backup.py         # makes one database backup (used by deploy/backup.sh)
 docs/ARCHITECTURE.md      # startup, routing, storage, external APIs
 deploy/Caddyfile          # HTTPS proxy for Docker Compose
+deploy/backup.sh          # nightly database backup (Docker); deploy/update.sh updates the server
 deploy/systemd/           # fallback: systemd units + Caddyfile for running without Docker
 tests/
 CONTRIBUTING.md           # style, PRs, how to add a module
@@ -453,11 +455,20 @@ The script refuses to run twice. `--force` re-runs it safely: tickets already co
 
 ```bash
 cd ~/joltbot
-git pull
-docker compose --profile proxy up -d --build   # rebuilds, runs new migrations, restarts what changed
+./deploy/update.sh
 ```
 
-Migrations run automatically (the `migrate` service). To change the database schema, see section 11.
+The script does this, in order, and stops at the first failure:
+
+1. `git pull`
+2. builds the new image, while JoltBot keeps running on the old one
+3. backs up the database (`deploy/backup.sh`, below)
+4. stops the bot and the dashboard, so old code never runs against a migrated database
+5. `docker compose up -d`: the `migrate` service applies new migrations, then both start again
+
+Downtime is steps 4 to 5, usually well under a minute. If the build or the backup fails, JoltBot is left running as it was. Caddy is included automatically when it is already running. `./deploy/update.sh --no-pull` updates to whatever is checked out, which is how to try a branch.
+
+The first time, the script isn't on the server yet: run `git pull` once by hand, then `./deploy/update.sh`. To change the database schema, see section 11.
 
 **Logs:** `docker compose logs -f bot` / `web` / `migrate`. Docker keeps them per container, capped at 5 files of 10 MB each (`x-logging` in `docker-compose.yml`), so they can't fill the disk. The cap applies to containers created after it was added: run `docker compose up -d --force-recreate` once. Set `LOG_FORMAT=json` in `.env` for machine-readable lines.
 
@@ -479,14 +490,34 @@ docker compose up -d                                             # restart so bo
 - The dashboard overview shows "JoltBot is offline right now" to server admins.
 - `GET /health/bot` on the dashboard answers 200 while the bot is connected and 503 otherwise. Point a free uptime monitor at `https://your-domain/health/bot` to be told when the bot goes down, including when the whole server is down (which the alert webhook can't report).
 
-**Backups:** the `joltbot-data` volume holds all settings and ticket state. A safe copy while JoltBot keeps running:
+**Backups:** the `joltbot-data` volume holds all settings and ticket state. `deploy/backup.sh` copies it out safely while JoltBot keeps running:
 
 ```bash
-docker compose exec -T web python -c "import sqlite3; sqlite3.connect('/app/data/joltbot.db').backup(sqlite3.connect('/app/data/backup.db'))"
-docker compose cp web:/app/data/backup.db ~/joltbot-backup-$(date +%F).db
+./deploy/backup.sh          # -> ~/joltbot-backups/joltbot-<UTC time>.db.gz
 ```
 
-Put both lines in a small script and run it nightly with cron. Each server's log channel also keeps the permanent ticket record.
+- Run it every night with cron. `crontab -e` (as the user that runs JoltBot), then add:
+  ```
+  15 3 * * * /home/botuser/joltbot/deploy/backup.sh >> /home/botuser/joltbot-backups/backup.log 2>&1
+  ```
+- Backups older than 14 days are deleted. Change that or the folder with `KEEP_DAYS=30 BACKUP_DIR=/some/folder ./deploy/backup.sh`.
+- A backup holds every server's settings and tickets but **no dashboard logins**: sessions are removed from the copy, so the file never contains anyone's Discord login token. Keep the files private all the same.
+- A failed backup is logged at ERROR, so it reaches `ALERT_WEBHOOK_URL` if you set one.
+- The backups sit on the same server as JoltBot. To survive losing the server, also copy `~/joltbot-backups` elsewhere (for example `rsync` to another machine, or switch on Hetzner's server backups).
+- Each server's log channel also keeps the permanent ticket record.
+- Without Docker: `.venv/bin/python -m scripts.backup --out ~/joltbot-backups/joltbot-$(date -u +%F).db`.
+
+**Restoring a backup** replaces the whole database with the copy. Everything saved after that backup is lost, and everyone has to log in to the dashboard again.
+
+```bash
+cd ~/joltbot
+docker compose stop bot web
+gunzip -c ~/joltbot-backups/joltbot-YYYYMMDD-HHMMSS.db.gz | docker compose run --rm --no-deps -T bot \
+    sh -c 'cat > /app/data/restore.db && rm -f /app/data/joltbot.db-wal /app/data/joltbot.db-shm && mv /app/data/restore.db /app/data/joltbot.db'
+docker compose up -d
+```
+
+If you are going back because an update failed, the backup is from before that update's migrations, so it needs the code from before the update too: run `git checkout <the commit you were on>` first, and use `docker compose up -d --build` as the last line.
 
 **Security:** never commit `.env`, keep the server patched (`sudo apt upgrade`), and rebuild now and then (`docker compose build --pull`) for base-image security fixes.
 
