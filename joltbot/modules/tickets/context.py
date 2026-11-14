@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING
 import discord
 
 from ...core.guild_settings import load_module
+from ..general.settings import MODULE as GENERAL
 from ..general.settings import GeneralSettings
+from .constants import MODULE
 from .settings import TicketSettings
 
 if TYPE_CHECKING:
@@ -55,8 +57,8 @@ async def load_context(bot: JoltBot, guild_id: int) -> TicketContext:
         Immutable ``TicketContext`` used by views, commands, and the service.
     """
     async with bot.db.session() as session:
-        tickets = await load_module(session, guild_id, "tickets")
-        general = await load_module(session, guild_id, "general")
+        tickets = await load_module(session, guild_id, MODULE)
+        general = await load_module(session, guild_id, GENERAL)
     general_settings: GeneralSettings = general.config
     return TicketContext(
         enabled=tickets.enabled,

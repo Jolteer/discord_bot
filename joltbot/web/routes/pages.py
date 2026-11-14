@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.responses import Response
 from sqlalchemy import select
 
 from ...core.discord_rest import DiscordError
@@ -17,12 +18,26 @@ router = APIRouter()
 
 
 @router.get("/")
-async def landing(request: Request):
+async def landing(request: Request) -> Response:
+    """The public landing page. No login needed."""
     return await render(request, "landing.html")
 
 
 @router.get("/servers")
-async def servers(request: Request, ws: RequireSession):
+async def servers(request: Request, ws: RequireSession) -> Response:
+    """The server picker. Needs a login.
+
+    Lists the servers the user manages, split into those JoltBot is in and those
+    it could be invited to, plus servers the user may use through a dashboard
+    access role.
+
+    Args:
+        request: Incoming HTTP request.
+        ws: The logged-in session.
+
+    Returns:
+        HTML for ``servers.html``.
+    """
     config = get_config(request)
     guilds = await current_user_guilds(request, ws)
     manageable = [g for g in guilds if g.can_manage]
@@ -47,6 +62,7 @@ async def servers(request: Request, ws: RequireSession):
             continue  # roles can't be checked right now: leave it off rather than fail the whole page
 
     def card(g: UserGuild) -> dict[str, Any]:
+        """One server in the shape the template shows it."""
         return {
             "id": str(g.id),
             "name": g.name,

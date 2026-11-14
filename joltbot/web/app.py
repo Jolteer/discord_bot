@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import importlib
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -13,6 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import RequestResponseEndpoint
 
 from ..core.config import AppConfig, get_config
 from ..core.db import Database
@@ -29,6 +31,10 @@ log = logging.getLogger(__name__)
 # Content-Security-Policy: the browser may only run scripts and load styles from our own site.
 # Tailwind's CDN build is allowed only while app.css hasn't been built (local development).
 TAILWIND_CDN = "https://cdn.jsdelivr.net"
+# How long browsers remember to use HTTPS only for this site: one year.
+HSTS_MAX_AGE_SECONDS = 31536000
+# Page titles for the error page, by HTTP status.
+ERROR_TITLES = {403: "Not allowed", 404: "Not found", 503: "Discord is unavailable"}
 
 
 def content_security_policy(allow_cdn: bool) -> str:
@@ -86,7 +92,12 @@ def create_app(
     )
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """Start-up and shutdown of the dashboard process.
+
+        Refuses to start with a required setting missing or the database out of
+        date, so the problem is named once, at start, not on some later request.
+        """
         if missing := config.missing("discord_token", "discord_client_id", "discord_client_secret", "session_secret"):
             raise RuntimeError(f"Missing in .env: {', '.join(missing)} (see .env.example).")
         if check_schema and (problem := await schema_problem(db)):
@@ -106,14 +117,15 @@ def create_app(
     app.state.config, app.state.db, app.state.discord = config, db, discord
 
     @app.middleware("http")
-    async def security_headers(request: Request, call_next) -> Response:
+    async def security_headers(request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """Add the browser security headers to every response."""
         response = await call_next(request)
         response.headers.setdefault("Content-Security-Policy", content_security_policy(not css_built()))
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "same-origin")
         if config.uses_https:
-            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+            response.headers.setdefault("Strict-Transport-Security", f"max-age={HSTS_MAX_AGE_SECONDS}")
         return response
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -126,24 +138,28 @@ def create_app(
             app.include_router(importlib.import_module(module.web).router)
 
     @app.exception_handler(LoginRequired)
-    async def _login_required(request: Request, exc: LoginRequired):
+    async def _login_required(request: Request, exc: LoginRequired) -> Response:
+        """Send an anonymous visitor to the login page."""
+        # htmx follows a normal redirect itself and would paste the login page into the
+        # current one. HX-Redirect tells it to send the whole browser tab there instead.
         if request.headers.get("hx-request"):
             return Response(status_code=401, headers={"HX-Redirect": "/login"})
         return RedirectResponse("/login", status_code=303)
 
     @app.exception_handler(StarletteHTTPException)
-    async def _http_error(request: Request, exc: StarletteHTTPException):
-        titles = {403: "Not allowed", 404: "Not found", 503: "Discord is unavailable"}
+    async def _http_error(request: Request, exc: StarletteHTTPException) -> Response:
+        """Show an HTTP error (403, 404, 503 ...) as a page in the site's own design."""
         message = exc.detail if exc.status_code != 404 or exc.detail != "Not Found" else "That page doesn't exist."
         return await render(
             request,
             "error.html",
-            {"title": titles.get(exc.status_code, "Something went wrong"), "message": message},
+            {"title": ERROR_TITLES.get(exc.status_code, "Something went wrong"), "message": message},
             status_code=exc.status_code,
         )
 
     @app.exception_handler(RequestValidationError)
-    async def _bad_url(request: Request, exc: RequestValidationError):
+    async def _bad_url(request: Request, exc: RequestValidationError) -> Response:
+        """Treat a malformed URL like a page that doesn't exist."""
         # e.g. /servers/not-a-number
         return await render(
             request, "error.html", {"title": "Not found", "message": "That page doesn't exist."}, status_code=404

@@ -23,6 +23,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .types import utcnow
@@ -42,7 +43,8 @@ class UTCDateTime(TypeDecorator):
     impl = DateTime(timezone=True)
     cache_ok = True
 
-    def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        """On the way in: require a timezone, convert to UTC, and drop the timezone for SQLite."""
         if value is None:
             return None
         if value.tzinfo is None:
@@ -50,7 +52,8 @@ class UTCDateTime(TypeDecorator):
         value = value.astimezone(timezone.utc)
         return value.replace(tzinfo=None) if dialect.name == "sqlite" else value
 
-    def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
+    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        """On the way out: always hand back a timezone-aware UTC datetime."""
         if value is None:
             return None
         return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
@@ -66,10 +69,13 @@ NAMING = {
 
 
 class Base(DeclarativeBase):
+    """Base class of every table. Sets the constraint naming convention."""
+
     metadata = MetaData(naming_convention=NAMING)
 
 
 def _guild_fk() -> Any:
+    """Foreign key to the owning guild. Such rows are deleted together with their guild."""
     return ForeignKey("guilds.id", ondelete="CASCADE")
 
 
@@ -151,6 +157,7 @@ class Ticket(Base):
 
     @property
     def note_lines(self) -> list[str]:
+        """The ticket's notes as a list. ``notes`` stores them as text, one note per line."""
         return [n for n in (self.notes or "").split("\n") if n]
 
 
@@ -191,7 +198,7 @@ class GuildIssue(Base):
 
     id: Mapped[int] = mapped_column(AutoId, primary_key=True, autoincrement=True)
     guild_id: Mapped[int] = mapped_column(BigInteger, _guild_fk())
-    key: Mapped[str] = mapped_column(String(64))  # e.g. "tickets.pending_role_hierarchy"
+    key: Mapped[str] = mapped_column(String(64))  # e.g. "tickets.pending_role"
     message: Mapped[str] = mapped_column(Text)
     first_seen: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
@@ -221,6 +228,14 @@ class WebSession(Base):
     csrf_token: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+
+
+# bot_meta keys. The values are stored in the database, so never change them.
+# (The heartbeat's key lives with its code, in core/health.py.)
+COMMANDS_HASH_KEY = "commands_hash"
+# Set by the KOC migration: guild IDs whose old per-guild slash commands (registered
+# by KOC Gatekeeper) the bot should remove, so they don't show up twice.
+CLEAR_GUILD_COMMANDS_KEY = "clear_guild_commands"
 
 
 class BotMeta(Base):

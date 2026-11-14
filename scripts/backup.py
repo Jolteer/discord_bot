@@ -40,6 +40,8 @@ class BackupError(Exception):
 
 @dataclass(frozen=True)
 class BackupInfo:
+    """What a finished backup holds, for the log line."""
+
     path: Path
     size: int
     guilds: int

@@ -11,7 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .base import ModuleSettingsModel
+from .general.settings import MODULE as GENERAL
 from .general.settings import GeneralSettings
+from .tickets.constants import MODULE as TICKETS
 from .tickets.settings import TicketSettings
 
 
@@ -42,7 +44,7 @@ MODULES: dict[str, ModuleInfo] = {
     m.name: m
     for m in (
         ModuleInfo(
-            name="general",
+            name=GENERAL,
             title="General",
             description="Server-wide settings such as embed colour.",
             settings_model=GeneralSettings,
@@ -50,7 +52,7 @@ MODULES: dict[str, ModuleInfo] = {
             web="joltbot.modules.general.web",
         ),
         ModuleInfo(
-            name="tickets",
+            name=TICKETS,
             title="Tickets & verification",
             description="New members apply through a form; staff accept or deny in a private ticket.",
             settings_model=TicketSettings,

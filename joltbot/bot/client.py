@@ -16,23 +16,25 @@ from ..core.config import AppConfig
 from ..core.db import Database
 from ..core.guild_settings import load_module
 from ..core.issues import clear_issue, record_issue
-from ..core.models import BotMeta
+from ..core.limits import MESSAGE_MAX
+from ..core.models import CLEAR_GUILD_COMMANDS_KEY, COMMANDS_HASH_KEY, BotMeta
+from ..modules.general.settings import MODULE as GENERAL
 from ..modules.registry import MODULES
+from .interactions import safe_reply
 
 if TYPE_CHECKING:
     from ..modules.tickets.service import TicketManager
 
 log = logging.getLogger(__name__)
 
-# bot_meta key the KOC migration sets: guild IDs whose old per-guild slash commands
-# (registered by KOC Gatekeeper) should be removed, so they don't show up twice.
-CLEAR_GUILD_COMMANDS_KEY = "clear_guild_commands"
-COMMANDS_HASH_KEY = "commands_hash"
-
 # Dashboard warning shown when a server's notices channel is gone or JoltBot can't post in it.
 NOTICE_CHANNEL_ISSUE = "general.notice_channel"
 NOTICE_HEADER = "⚠️ **JoltBot needs attention**\n"
 NOTICE_FOOTER = "\n\nThis is also shown on the JoltBot dashboard and clears itself once it's fixed."
+
+# Registering slash commands is retried with a doubling wait, from the first value up to the second.
+SYNC_RETRY_FIRST_SECONDS = 30
+SYNC_RETRY_MAX_SECONDS = 900
 
 
 class Tree(app_commands.CommandTree):
@@ -54,13 +56,7 @@ class Tree(app_commands.CommandTree):
         else:
             log.exception("Slash command failed", exc_info=error)
             message = "Something went wrong running that command. Please try again in a moment."
-        try:
-            if interaction.response.is_done():
-                await interaction.followup.send(message, ephemeral=True)
-            else:
-                await interaction.response.send_message(message, ephemeral=True)
-        except (discord.HTTPException, OSError):
-            pass
+        await safe_reply(interaction, message)
 
 
 class JoltBot(commands.Bot):
@@ -79,6 +75,10 @@ class JoltBot(commands.Bot):
     tickets: TicketManager  # set by the tickets cog when it loads
 
     def __init__(self, config: AppConfig) -> None:
+        """Set up the intents, the command tree and the database.
+
+        Nothing connects to Discord until ``start`` is called.
+        """
         intents = discord.Intents.default()
         intents.members = True  # PRIVILEGED: join/leave events + member cache
         intents.message_content = True  # PRIVILEGED: needed to read messages for transcripts
@@ -88,6 +88,8 @@ class JoltBot(commands.Bot):
             help_command=None,
             tree_cls=Tree,
             allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True),
+            # Keep every member in memory and load each server's member list at startup: the
+            # ticket module looks members up by ID, and grant-existing walks guild.members.
             member_cache_flags=discord.MemberCacheFlags.all(),
             chunk_guilds_at_startup=True,
         )
@@ -129,8 +131,13 @@ class JoltBot(commands.Bot):
         task.add_done_callback(self._background.discard)
 
     async def _sync_commands_with_retry(self) -> None:
+        """Register slash commands once the bot is ready, retrying until Discord accepts.
+
+        Runs as a background task (see ``setup_hook``). The wait between tries doubles,
+        from ``SYNC_RETRY_FIRST_SECONDS`` up to ``SYNC_RETRY_MAX_SECONDS``.
+        """
         await self.wait_until_ready()
-        delay = 30
+        delay = SYNC_RETRY_FIRST_SECONDS
         while not self.is_closed():
             try:
                 await self.sync_commands()
@@ -138,7 +145,7 @@ class JoltBot(commands.Bot):
             except Exception:
                 log.exception("Couldn't register slash commands; retrying in %ss", delay)
                 await asyncio.sleep(delay)
-                delay = min(delay * 2, 900)
+                delay = min(delay * 2, SYNC_RETRY_MAX_SECONDS)
 
     async def sync_commands(self) -> None:
         """Register global slash commands only when the payload hash changed.
@@ -248,7 +255,7 @@ class JoltBot(commands.Bot):
             if guild is None:
                 return
             async with self.db.session() as session:
-                general = await load_module(session, guild_id, "general")
+                general = await load_module(session, guild_id, GENERAL)
             channel_id = general.config.notice_channel_id
             if channel_id is None:
                 return
@@ -258,7 +265,7 @@ class JoltBot(commands.Bot):
             if not isinstance(channel, discord.TextChannel):
                 problem = "The bot notices channel no longer exists. Pick another on the dashboard (General)."
             else:
-                room = 2000 - len(NOTICE_HEADER) - len(NOTICE_FOOTER)
+                room = MESSAGE_MAX - len(NOTICE_HEADER) - len(NOTICE_FOOTER)
                 text = NOTICE_HEADER + (message if len(message) <= room else message[: room - 1] + "…") + NOTICE_FOOTER
                 try:
                     await channel.send(text, allowed_mentions=discord.AllowedMentions.none())

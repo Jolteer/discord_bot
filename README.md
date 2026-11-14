@@ -39,15 +39,47 @@ JoltBot runs as **two processes** that share one SQLite database:
 
 ## Commands
 
-All slash commands are under `/tickets`, **guild only**. Discord hides them from members without **Manage Server** by default (`default_permissions`). Members with a configured **staff role** can also run `panel` and `diagnostics` once they can see the commands (Server Settings → Integrations → JoltBot to grant visibility). No command cooldowns.
+### Slash commands
 
-| Command | Arguments | Who can use it | What it does |
+All three are under `/tickets`, take no arguments and work only inside a server.
+
+Discord hides them from members without **Manage Server** by default. A server's admins can show them to other roles under **Server Settings → Integrations → JoltBot**. Seeing a command is not enough to run it: JoltBot checks the "Who can run it" rule on every use. There are no cooldowns.
+
+| Command | Who can run it | What JoltBot needs | What it does |
 |---|---|---|---|
-| `/tickets panel` | none | Manage Server **or** staff role | Posts (or re-posts) the application panel in the configured panel channel, pins it when possible, and records the message ID so only one panel exists |
-| `/tickets diagnostics` | none | Manage Server **or** staff role | Ephemeral report of bot permissions, role order, category limits, and setup gaps |
-| `/tickets grant-existing` | none (confirm button) | Manage Server only | One-time bulk: give accept role(s) to members who have neither accept nor pending roles. Members with an open application are left out |
+| `/tickets panel` | Manage Server, or staff | View Channel, Send Messages and Embed Links in the panel channel. Pin Messages to pin the panel (optional) | Posts the application panel in the panel channel and pins it when it can. The previous panel is deleted, so there is only ever one |
+| `/tickets diagnostics` | Manage Server, or staff | Nothing extra | Private report on JoltBot's permissions, role order, category limits and anything not set up |
+| `/tickets grant-existing` | Manage Server only | Manage Roles, and its own role above the accept role(s) | One-time bulk job. After a confirm button, gives the accept role(s) to members who have neither an accept role nor the pending role. Members with an open application are left out. One run per server at a time |
 
-**UI (not slash commands):** panel **Open Application** (anyone eligible); ticket **Accept** / **Deny** / **Close** (staff). Confirmations are ephemeral.
+**Staff** means anyone holding one of the server's **Staff roles** (set on the dashboard). Members with Discord's Administrator permission count as staff too, while **Members with Administrator also count as staff** is ticked (it is by default). Manage Server on its own is not staff.
+
+### Buttons
+
+| Button | Where | Who can use it | What JoltBot needs |
+|---|---|---|---|
+| **Open Application** | The panel message | Any member. Turned away if they already hold an accept role or already have a ticket | Manage Channels and Manage Roles in the ticket category, to create the private ticket channel |
+| **Accept** | Each ticket | Staff | Manage Roles, and its own role above every role it gives or removes |
+| **Deny** | Each ticket | Staff | Kick Members and a role above the applicant's, only for "Deny and kick" |
+| **Close** | Each ticket | Staff | Nothing extra |
+
+Every decision also needs View Channel, Send Messages, Embed Links and Attach Files in the log channel, and Manage Channels to delete the ticket channel afterwards. Staff are re-checked on every click, so removing someone's staff role takes effect at once. Replies and confirmations are private to whoever clicked.
+
+### Commands for whoever runs JoltBot
+
+Run from the project folder. With Docker, `docker compose up -d` already runs the migrations and starts the bot and the dashboard, so only the one-off commands are typed by hand, with `docker compose run --rm bot` in front (for example `docker compose run --rm bot python -m joltbot.bot --test-alert`).
+
+| Command | What it does |
+|---|---|
+| `python -m joltbot.bot` | Starts the bot |
+| `python -m joltbot.bot --test-alert` | Posts one test message to `ALERT_WEBHOOK_URL` and exits |
+| `python -m joltbot.bot.healthcheck` | Says whether the bot is connected to Discord (exit code 0 or 1). Docker's health check |
+| `python -m joltbot.web [--host H] [--port P] [--reload]` | Starts the dashboard |
+| `alembic upgrade head` | Creates or updates the database tables |
+| `python -m scripts.backup [--out FILE]` | Makes one database backup (section 9) |
+| `python -m scripts.preview_site [--port P] [--bot-down]` | Runs the website with example data, no Discord needed (section 4) |
+| `python -m scripts.migrate_koc …` | The one-time King of Chaos import (section 8) |
+| `./deploy/update.sh [--no-pull]` | Updates a Docker server (section 9) |
+| `./deploy/backup.sh` | Backs up the database of a Docker server (section 9) |
 
 ---
 
@@ -85,40 +117,85 @@ Pinned deps: [`requirements.txt`](requirements.txt). Full locks with a checksum 
 
 ```
 joltbot/
-├── core/                 # shared by bot AND dashboard (no discord.py / FastAPI here)
-│   ├── config.py         # every setting, read from environment variables / .env
-│   ├── db.py, models.py  # SQLAlchemy database + tables (SQLite in WAL mode)
-│   ├── guild_settings.py # load/save a server's settings + audit log
-│   ├── guilds.py         # join / leave / startup sync / 30-day purge
-│   ├── issues.py         # problems shown to admins on the dashboard
-│   ├── health.py         # the bot's heartbeat: is it connected to Discord?
-│   ├── alerts.py         # ERROR-level log lines -> your Discord webhook
-│   ├── discord_rest.py   # Discord REST client for the dashboard (cached roles/channels)
-│   ├── logsetup.py       # logging (console + optional rotating file; text or JSON)
-│   ├── permissions.py    # permission bits + invite link
-│   └── templating.py     # {user}/{server} placeholders
+├── core/                   # shared by bot AND dashboard (no discord.py / FastAPI here)
+│   ├── config.py           # every setting, read from environment variables / .env
+│   ├── db.py, models.py    # SQLAlchemy database + tables (SQLite in WAL mode)
+│   ├── schema.py           # startup check: is the database up to date?
+│   ├── guild_settings.py   # load/save a server's settings + audit log
+│   ├── guilds.py           # join / leave / startup sync / 30-day purge
+│   ├── issues.py           # problems shown to admins on the dashboard
+│   ├── health.py           # the bot's heartbeat: is it connected to Discord?
+│   ├── alerts.py           # ERROR-level log lines -> your Discord webhook
+│   ├── discord_rest.py     # Discord REST client for the dashboard (cached roles/channels)
+│   ├── logsetup.py         # logging (console + optional rotating file; text or JSON)
+│   ├── permissions.py      # permission bits + invite link
+│   ├── limits.py           # Discord's size limits (message, embed, form, dropdown), named once
+│   ├── templating.py       # {user}/{server} placeholders
+│   └── types.py            # Discord ID types, utcnow()
 ├── modules/
-│   ├── registry.py       # the list of modules; add new ones here (section 11)
-│   ├── general/          # embed colour, notices channel, module on/off switches
-│   └── tickets/          # settings.py, cog.py (bot), service.py + store.py (logic, DB), web.py + templates
-├── bot/                  # bot process: client, guild sync, heartbeat, startup retry loop
-└── web/                  # dashboard process: app, routes/, login, security checks, templates, static files
-migrations/               # Alembic database migrations
-scripts/migrate_koc.py    # one-time King of Chaos migration
-scripts/backup.py         # makes one database backup (used by deploy/backup.sh)
-scripts/preview_site.py   # runs the website with example data, no Discord needed (section 4)
-docs/ARCHITECTURE.md      # startup, routing, storage, external APIs
-deploy/Caddyfile          # HTTPS proxy for Docker Compose
-deploy/backup.sh          # nightly database backup (Docker); deploy/update.sh updates the server
-deploy/systemd/           # fallback: systemd units + Caddyfile for running without Docker
-tests/
-CONTRIBUTING.md           # style, PRs, how to add a module
+│   ├── registry.py         # the list of modules; add new ones here (section 11)
+│   ├── base.py             # base class of every module's settings
+│   ├── general/            # embed colour, notices channel, dashboard access roles, module switches
+│   │   ├── settings.py     #   the per-server settings
+│   │   ├── web.py          #   the dashboard page
+│   │   └── templates/
+│   └── tickets/
+│       ├── settings.py     #   the per-server settings (section 6 lists them)
+│       ├── constants.py    #   ticket statuses, outcomes and issue keys stored in the database
+│       ├── cog.py          #   bot: /tickets commands, join/leave events, recovery loop
+│       ├── views/          #   bot: buttons and forms (applicant.py, staff.py, common.py)
+│       ├── service.py      #   ticket lifecycle: create, accept, deny, close, finalize, recover
+│       ├── store.py        #   ticket database operations
+│       ├── channels.py     #   the ticket channel's name and permissions
+│       ├── log_post.py     #   posting the decision, transcript and files to the log channel
+│       ├── transcript.py   #   channel history -> text transcript
+│       ├── embeds.py       #   every embed and DM
+│       ├── checks.py       #   who is staff; can JoltBot give this role or kick this member?
+│       ├── diagnostics.py  #   the /tickets diagnostics report
+│       ├── context.py      #   loads a server's settings for one event
+│       ├── forms.py        #   dashboard: reads and checks the settings form
+│       ├── web.py          #   dashboard: the Tickets page
+│       └── templates/
+├── bot/                    # the bot process
+│   ├── __main__.py         #   python -m joltbot.bot: startup checks, retry loop, exit codes
+│   ├── client.py           #   the JoltBot class: module loading, slash-command sync, issue reporting
+│   ├── guild_sync.py       #   keeps the list of servers current
+│   ├── heartbeat.py        #   writes the heartbeat once a minute
+│   ├── healthcheck.py      #   Docker's health check for the bot
+│   └── interactions.py     #   helper for answering a click or command
+└── web/                    # the dashboard process
+    ├── __main__.py         #   python -m joltbot.web: runs uvicorn
+    ├── app.py              #   builds the app: routes, security headers, error pages
+    ├── security.py         #   login, per-server access and CSRF checks
+    ├── sessions.py         #   login sessions
+    ├── rendering.py        #   Jinja2 templates
+    ├── form_helpers.py     #   pieces every settings page shares
+    ├── options.py          #   roles and channels shaped for dropdowns
+    ├── watchdog.py         #   alerts you when the bot stops reporting in
+    ├── routes/             #   health.py, pages.py, auth.py (login), guild.py (overview, audit log, access)
+    ├── templates/          #   pages, plus _styles.css (the design system), _form.html, _icons.html
+    ├── static/             #   app.js, fonts, icons; app.css and vendor/htmx.min.js are built, not committed
+    └── styles/             #   input.css (Tailwind entry) and the source of the share image
+migrations/                 # Alembic database migrations
+scripts/migrate_koc.py      # one-time King of Chaos migration
+scripts/backup.py           # makes one database backup (used by deploy/backup.sh)
+scripts/preview_site.py     # runs the website with example data, no Discord needed (section 4)
+docs/ARCHITECTURE.md        # startup, routing, storage, external APIs
+deploy/Caddyfile            # HTTPS proxy for Docker Compose
+deploy/backup.sh            # nightly database backup (Docker)
+deploy/update.sh            # updates a Docker server
+deploy/systemd/             # fallback: systemd units + Caddyfile for running without Docker
+tests/                      # pytest; fakes.py stands in for Discord, example_module/ is the README's example
+CONTRIBUTING.md             # style, PRs, how to add a module
+DEPLOYMENT.md               # how the live server is set up, with its exact commands
 Dockerfile, docker-compose.yml, .dockerignore
-requirements.txt          # direct dependencies, exact versions (edit this one)
-requirements.lock         # every dependency, exact versions + checksums (generated; used by Docker)
-requirements-dev.txt      # requirements.txt + pytest + ruff (edit this one)
-requirements-dev.lock     # the same, fully pinned + checksums (generated; used by CI and for development)
-.github/workflows/ci.yml  # lint, format check, tests, Docker build on every push / PR
+.env.example                # copy to .env and fill in (section 3)
+alembic.ini, pyproject.toml # migration and lint/test settings
+requirements.txt            # direct dependencies, exact versions (edit this one)
+requirements.lock           # every dependency, exact versions + checksums (generated; used by Docker)
+requirements-dev.txt        # requirements.txt + pytest + ruff (edit this one)
+requirements-dev.lock       # the same, fully pinned + checksums (generated; used by CI and for development)
+.github/workflows/ci.yml    # lint, format check, tests, Docker build on every push / PR
 ```
 
 ---
@@ -196,6 +273,33 @@ All settings come from environment variables, or from a `.env` file in the proje
 | `DOMAIN` | Caddy | | Docker Compose + Caddy only: the domain to get an HTTPS certificate for. |
 
 If a required variable is missing, the process stops at startup and names it. Logs never contain the token, the secrets or the one-time login code.
+
+Two more variables are read only by `deploy/backup.sh`, from the shell that runs it, not from `.env`:
+
+| Variable | Default | What it's for |
+|---|---|---|
+| `BACKUP_DIR` | `~/joltbot-backups` | Folder the backups are written to. |
+| `KEEP_DAYS` | `7` | Backups older than this many days are deleted. |
+
+These are the only global settings. Everything about one Discord server is set per server on the dashboard; section 6 lists those settings.
+
+### Values fixed in the code
+
+These are not configurable. Each is a named constant in the file shown, if you ever need to change one.
+
+| What | Value | Where |
+|---|---|---|
+| Stuck or half-finished tickets are picked up again | every 5 minutes; a ticket counts as stuck after 2 minutes | `modules/tickets/cog.py`, `modules/tickets/service.py` |
+| Files copied to the log channel per ticket | at most 25 | `modules/tickets/log_post.py` |
+| Bot heartbeat | every 60 seconds; shown as offline after 3 minutes | `core/health.py` |
+| Alert that the bot is gone | after 5 minutes | `web/watchdog.py` |
+| Wait before the bot restarts itself after a crash | 10 seconds, doubling up to 5 minutes | `bot/__main__.py` |
+| Alerts to the webhook | the same error at most once per 10 minutes; at most 10 alerts per 10 minutes | `core/alerts.py` |
+| Data of a server JoltBot left | deleted after 30 days | `core/guilds.py` |
+| Dashboard login | lasts 7 days | `web/sessions.py` |
+| A user's server list and permissions | re-checked every 5 minutes; reused for up to 30 minutes if Discord is down | `web/sessions.py` |
+| A server's roles, channels and a member's roles | cached for 60 seconds | `core/discord_rest.py` |
+| Log files (when `LOG_DIR` is set) | 2 MB each, 5 older files kept | `core/logsetup.py` |
 
 ---
 
@@ -349,6 +453,65 @@ To remove someone's access, take the role away from them in Discord (it stops wo
 
 Give an access role only to people you would trust with every setting on the dashboard: they can, for example, change which roles count as ticket staff.
 
+### Per-server settings reference
+
+Every setting below belongs to one server and is changed on its dashboard. Changes apply at once, with no restart. The **Key** column is the name the **Audit log** shows when the setting changes.
+
+**General** (Dashboard → General; the access roles are on Dashboard → Dashboard access)
+
+| Setting | Key | Default | Notes |
+|---|---|---|---|
+| Embed colour | `embed_color` | `#FFB800` | `#RRGGBB`. Used for JoltBot's embeds in this server |
+| Notices channel | `notice_channel_id` | none | A text channel of this server. Each new problem is posted there once, without pinging anyone |
+| Dashboard access roles | `dashboard_role_ids` | none | Up to 25 roles. Only Manage Server, Administrator or the owner can change this |
+| Module switches | `enabled` (per module) | off | A module can only be switched on once its own setup is complete |
+
+**Tickets & verification** (Dashboard → Tickets & verification)
+
+| Setting | Key | Default | Notes |
+|---|---|---|---|
+| Ticket module is ON | `enabled` | off | Needs the four settings marked "required" |
+| Staff roles | `staff_role_ids` | none | Up to 25. Who may accept, deny and close |
+| Members with Administrator also count as staff | `allow_administrators` | on | With this off, at least one staff role is required |
+| Panel channel | `panel_channel_id` | none | Required. Where `/tickets panel` posts the panel |
+| Ticket category | `ticket_category_id` | none | Required. New ticket channels are created here (Discord allows 50 channels per category) |
+| Log channel | `log_channel_id` | none | Required. Decisions and transcripts are posted here. Keep it staff-only |
+| Welcome channel | `welcome_channel_id` | none | Optional. Only tells `/tickets diagnostics` that pending members may see this channel |
+| Pending role | `pending_role_id` | none | Optional. Given on join, removed on accept. Can't also be a role given on accept |
+| Give the pending role to people who joined while JoltBot was offline | `assign_pending_on_startup` | off | Skipped, with a warning, when many members have neither role (run `/tickets grant-existing` first) |
+| Roles given on accept | `accept_role_ids` | none | Required: at least 1, up to 10 |
+| Extra role choices | `extra_role_choices` | none | Up to 24. Each has a label, a role and an optional emoji. Staff may pick one when accepting |
+| Ping staff when a ticket opens | `ping_enabled` | on | |
+| Ping roles | `ping_role_ids` | none | Up to 10. Empty means the staff roles are pinged. Ping roles can see tickets but can't use the staff buttons |
+| Application questions | `form_questions` | 2 questions | 1 to 5. Each has a label (45 characters), a hint (100), required or not, one line or several, and a maximum answer length (1 to 1000, default 200) |
+| Warn staff on Accept if the applicant hasn't uploaded a file | `require_attachment` | off | A warning only; staff can still accept |
+| Dropdown questions | `choice_questions` | none | Up to 4, each with 2 to 10 options. An option has a label, an optional role given on accept, and an optional icon |
+| Delete delay | `delete_delay_seconds` | 10 | 0 to 3600 seconds between closing a ticket and deleting its channel |
+| Copy uploaded files to the log channel before deleting the ticket | `reupload_attachments` | on | Discord deletes files with their channel |
+| Messages | `messages.<name>` | see below | The texts members see |
+
+Roles and channels must belong to the server, and every role JoltBot gives must sit below JoltBot's own role. A role with moderation permissions, or a dashboard access role, can only be made giveable by the owner or an Administrator.
+
+**Messages.** Placeholders are written in curly brackets and filled in when the message is sent. One that a message doesn't support is left as typed. `{guild}` still works as an old name for `{server}`.
+
+| Message | Key | Longest | Placeholders |
+|---|---|---|---|
+| Panel title | `panel_title` | 256 | `{server}` |
+| Panel text | `panel_description` | 4000 | `{server}` |
+| Button label | `panel_button_label` | 80 | none |
+| Form title | `form_title` | 45 | none |
+| Ticket opened (private reply) | `ticket_opened` | 2000 | `{user}` `{user_name}` `{server}` `{channel}` |
+| Welcome message in the ticket | `ticket_intro` | 2000 | `{user}` `{user_name}` `{server}` |
+| Accepted DM | `welcome_dm` | 3000 | `{user}` `{user_name}` `{server}` `{role}` `{role_line}` |
+| Denied DM | `deny_dm` | 3000 | `{user}` `{user_name}` `{server}` `{reason}` |
+| Denied DM: kicked ending | `deny_dm_kicked_suffix` | 500 | `{server}` |
+| Denied DM: not kicked ending | `deny_dm_kept_suffix` | 500 | `{server}` |
+| Not staff reply | `not_staff` | 2000 | `{server}` |
+| Already verified reply | `already_verified` | 2000 | `{user}` `{user_name}` `{server}` |
+| Deny reason hint | `deny_reason_hint` | 100 | none |
+
+`{user}` is a mention and `{user_name}` the plain name. `{role}` is the extra role staff picked on accept, and `{role_line}` a ready-made "Role: …" line that is empty when none was picked.
+
 ---
 
 ## 7. Deploying
@@ -361,7 +524,7 @@ The bot and the dashboard share one SQLite file, so **both containers must run o
 
 ### 7.2 Hetzner VPS with Docker (main path)
 
-These steps assume Ubuntu 24.04 and a user called `botuser`.
+These steps assume Ubuntu 24.04 and a user called `botuser`. The live JoltBot server is set up a little differently (it runs from `/root/joltbot`, with Caddy); [DEPLOYMENT.md](DEPLOYMENT.md) has its exact commands.
 
 ```bash
 # as root / sudo: install Docker (official convenience script)
@@ -527,6 +690,23 @@ Downtime is steps 4 to 5, usually well under a minute. If the build or the backu
 
 The first time, the script isn't on the server yet: run `git pull` once by hand, then `./deploy/update.sh`. To change the database schema, see section 11.
 
+**Restart:** on the server, in the project folder. Add `--profile proxy` after `docker compose` if you use Caddy.
+
+```bash
+cd ~/joltbot
+docker compose restart bot          # restart only the bot
+docker compose restart web          # restart only the dashboard; logins are kept
+docker compose up -d                # after editing .env: re-creates what changed, with the new values
+docker compose stop bot web         # stop both; `docker compose up -d` starts them again
+docker compose ps                   # check: web "healthy" within seconds, bot about two minutes after it connects
+```
+
+- `restart` does **not** re-read `.env`. After changing a setting or a secret there, use `docker compose up -d`.
+- Settings changed on the dashboard need no restart at all.
+- A restart is safe at any time: tickets that were half-way through closing are finished within 5 minutes of the bot coming back.
+- Without Docker: `sudo systemctl restart joltbot-bot joltbot-web`.
+- From your own PC: `ssh USER@YOUR_SERVER "cd ~/joltbot && docker compose restart bot"`.
+
 **Logs:** `docker compose logs -f bot` / `web` / `migrate`. Docker keeps them per container, capped at 5 files of 10 MB each (`x-logging` in `docker-compose.yml`), so they can't fill the disk. The cap applies to containers created after it was added: run `docker compose up -d --force-recreate` once. Set `LOG_FORMAT=json` in `.env` for machine-readable lines.
 
 **Alerts:** to be told when something breaks, create a webhook in a private channel of your own server (Edit Channel → Integrations → Webhooks → New Webhook → Copy Webhook URL) and put it in `.env` as `ALERT_WEBHOOK_URL`. Then:
@@ -641,6 +821,8 @@ from joltbot.modules.base import ModuleSettingsModel
 
 
 class HelloSettings(ModuleSettingsModel):
+    """What one server can set for the hello module."""
+
     # {user} and {server} are filled in when the message is sent.
     greeting: str = Field("Hello {user}, welcome to {server}!", min_length=1, max_length=200)
 ```
@@ -659,12 +841,15 @@ from joltbot.core.templating import render
 
 
 class Hello(commands.Cog):
+    """The /hello command."""
+
     def __init__(self, bot) -> None:
         self.bot = bot
 
     @app_commands.command(name="hello", description="Get a hello from JoltBot.")
     @app_commands.guild_only()
     async def hello(self, interaction: discord.Interaction) -> None:
+        """Reply privately with the server's greeting. Any member can use it, inside a server only."""
         # Read the settings fresh on every use, so dashboard changes apply at once.
         async with self.bot.db.session() as session:
             state = await load_module(session, interaction.guild_id, "hello")
@@ -676,6 +861,7 @@ class Hello(commands.Cog):
 
 
 async def setup(bot) -> None:
+    """discord.py calls this when the bot loads the module."""
     await bot.add_cog(Hello(bot))
 ```
 
@@ -704,7 +890,9 @@ That's all. Without writing anything else:
 
 - **Settings per event.** Call `load_module(session, guild_id, "<name>")` in every handler and do nothing when `state.enabled` is false. Never cache settings and never hard-code a server, channel or role ID.
 - **Permissions.** Hide admin commands with `@app_commands.default_permissions(...)`, and check again in code, because server admins can change who sees a command. See `_setup_check` in `modules/tickets/cog.py`.
-- **Buttons that survive a restart.** Give the view `timeout=None` and fixed `custom_id`s, and register it with `bot.add_view(...)` in `cog_load`. See `modules/tickets/views.py`.
+- **Buttons that survive a restart.** Give the view `timeout=None` and fixed `custom_id`s, and register it with `bot.add_view(...)` in `cog_load`. See `modules/tickets/views/`. Never change a `custom_id` once a message with that button has been posted.
+- **Names for fixed values.** Discord's size limits are in `core/limits.py`. Strings that are stored in the database (statuses, issue keys, the module's own name) get a named constant, as in `modules/tickets/constants.py`, and are never changed afterwards.
+- **Docstrings.** Every module, class, command, event handler and button gets one, and commands and buttons say who may use them. CONTRIBUTING.md has the style.
 - **Problems with nobody to reply to.** `await bot.report_issue(guild_id, "<name>.<what>", "what the admin should do")`, and `bot.resolve_issue(...)` once it works again. The admin sees it on the dashboard and in their notices channel.
 - **New bot permissions** (for example Ban Members) go in `BOT_PERMISSIONS` in `core/permissions.py`, which builds the invite link. Servers that already have the bot must grant the permission themselves.
 - **A settings page.** Add `web.py` with a FastAPI `router` (prefix `/servers/{guild_id}/<name>`), templates in `templates/<name>/`, and `web="joltbot.modules.<name>.web"` in the registry entry. Start from `modules/general/web.py`. Every route takes `access: RequireGuild`, every POST adds `dependencies=[CsrfProtected]`, and any role or channel ID from a form must be checked against that server.

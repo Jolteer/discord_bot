@@ -12,9 +12,9 @@ import hmac
 import secrets
 
 from fastapi import APIRouter, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 
-from ...core.discord_rest import DiscordError
+from ...core.discord_rest import DEFAULT_TOKEN_LIFETIME_SECONDS, DiscordError
 from ..rendering import render
 from ..security import (
     STATE_COOKIE,
@@ -32,7 +32,7 @@ STATE_MAX_AGE = 600  # seconds the user has to finish logging in on Discord
 
 
 @router.get("/login")
-async def login(request: Request):
+async def login(request: Request) -> Response:
     """Start Discord OAuth: set ``state`` cookie and redirect to Discord.
 
     Args:
@@ -56,7 +56,8 @@ async def login(request: Request):
     return response
 
 
-async def _login_failed(request: Request, message: str):
+async def _login_failed(request: Request, message: str) -> Response:
+    """Show why the login failed, and clear the one-time state cookie so the next try starts clean."""
     response = await render(
         request, "error.html", {"title": "Login failed", "message": message, "retry_url": "/login"}, status_code=400
     )
@@ -65,7 +66,9 @@ async def _login_failed(request: Request, message: str):
 
 
 @router.get("/auth/callback")
-async def callback(request: Request, code: str | None = None, state: str | None = None, error: str | None = None):
+async def callback(
+    request: Request, code: str | None = None, state: str | None = None, error: str | None = None
+) -> Response:
     """Finish Discord OAuth: validate ``state``, exchange ``code``, create session.
 
     Args:
@@ -101,7 +104,7 @@ async def callback(request: Request, code: str | None = None, state: str | None 
         config.session_secret,
         user=user,
         access_token=token["access_token"],
-        expires_in=int(token.get("expires_in", 604800)),
+        expires_in=int(token.get("expires_in", DEFAULT_TOKEN_LIFETIME_SECONDS)),
         guilds=guilds,
     )
     response = RedirectResponse("/servers", status_code=303)
@@ -119,7 +122,7 @@ async def callback(request: Request, code: str | None = None, state: str | None 
 
 
 @router.post("/logout", dependencies=[CsrfProtected])
-async def logout(request: Request, ws: RequireSession):
+async def logout(request: Request, ws: RequireSession) -> Response:
     """End the dashboard session and clear the session cookie.
 
     Args:

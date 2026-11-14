@@ -2,6 +2,8 @@
 
 Views and listeners stay thin and call into TicketManager, so all the rules
 (ordering, rollback on failure, race protection) live in this one file.
+Two stateless parts sit next to it: channels.py (the ticket channel's name and
+permissions) and log_post.py (posting to the log channel).
 
 Fixes compared to the old bot:
 - Any error after a ticket is claimed (not only Discord "HTTP" errors, but also
@@ -16,43 +18,46 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any
 
 import discord
 
 from ...core.db import Database
+from ...core.limits import AUDIT_REASON_MAX, CATEGORY_MAX_CHANNELS, MESSAGE_MAX
 from ...core.models import Ticket
 from ...core.templating import render
 from . import embeds, store
+from .channels import ticket_channel_name, ticket_overwrites
 from .checks import hierarchy_problems, kick_problem, roles_by_id
+from .constants import (
+    ISSUE_CATEGORY,
+    ISSUE_CATEGORY_FULL,
+    ISSUE_CREATE_CHANNEL,
+    ISSUE_DELETE_CHANNEL,
+    OUTCOME_ACCEPTED,
+    OUTCOME_CHANNEL_DELETED,
+    OUTCOME_CLOSED,
+    OUTCOME_DENIED,
+    OUTCOME_LEFT,
+    STATUS_CLOSED,
+    STATUS_CLOSING,
+    STATUS_OPEN,
+)
 from .context import TicketContext, load_context
-from .transcript import build_transcript, transcript_file
+from .log_post import LOG_CHANNEL_PERMISSIONS, post_log
+from .transcript import build_transcript
+from .views import TicketControlView
 
 if TYPE_CHECKING:
     from ...bot.client import JoltBot
 
 log = logging.getLogger(__name__)
 
-MAX_REUPLOADS = 25  # cap on attachments re-uploaded to the log channel per ticket
 STUCK_AFTER_SECONDS = 120  # a claimed ticket with nothing working on it for this long is resumed
-# What JoltBot needs in the log channel to post a decision with its transcript.
-LOG_CHANNEL_PERMISSIONS = ("view_channel", "send_messages", "embed_links", "attach_files")
 DISCORD_TROUBLE = "Discord didn't respond properly. Nothing was changed; please try again in a moment."
-
-
-def ticket_channel_name(member: discord.Member) -> str:
-    """Build a Discord-safe channel name from the member's username.
-
-    Args:
-        member: Applicant whose name becomes the channel slug.
-
-    Returns:
-        Name like ``ticket-alice`` truncated to 100 characters.
-    """
-    slug = re.sub(r"[^a-z0-9-]+", "-", member.name.lower()).strip("-") or str(member.id)
-    return f"ticket-{slug}"[:100]
+ALREADY_HANDLED = "Someone else already handled this ticket."
+WELCOME_DM_FAILED_NOTE = "Welcome DM failed (applicant's DMs are closed)."
 
 
 class TicketManager:
@@ -63,18 +68,21 @@ class TicketManager:
     """
 
     def __init__(self, bot: JoltBot) -> None:
+        """Create the manager with no ticket work in progress."""
         self.bot = bot
         # Ticket IDs this process is currently working on. recover() leaves these alone.
         self._busy: set[int] = set()
         # Ticket IDs whose channel is being created right now. recover() leaves these alone too.
         self._creating: set[int] = set()
-        self._tasks: set[asyncio.Task] = set()
+        self._tasks: set[asyncio.Task[None]] = set()
 
     @property
     def db(self) -> Database:
+        """The bot's database, for the ``store`` functions."""
         return self.bot.db
 
     def _spawn(self, coro: Coroutine[Any, Any, None]) -> None:
+        """Run a piece of ticket work in the background and keep track of it."""
         # Keep a reference to background tasks, otherwise Python may garbage-collect them mid-run.
         task = asyncio.create_task(coro)
         self._tasks.add(task)
@@ -82,6 +90,18 @@ class TicketManager:
         task.add_done_callback(_log_task_errors)
 
     async def _get_member(self, guild: discord.Guild, user_id: int) -> discord.Member | None:
+        """Find a member, asking Discord when they are not in the bot's cache.
+
+        Args:
+            guild: Server to look in.
+            user_id: The member's user ID.
+
+        Returns:
+            The member, or ``None`` once Discord confirms they are not in the server.
+
+        Raises:
+            discord.HTTPException: Discord couldn't answer. Not the same as "not a member".
+        """
         member = guild.get_member(user_id)
         if member is not None:
             return member
@@ -112,49 +132,34 @@ class TicketManager:
             return False
 
     async def _dm(self, member: discord.Member, embed: discord.Embed) -> bool:
+        """Send a DM. Returns False, without raising, if it can't be delivered (usually closed DMs)."""
         try:
             await member.send(embed=embed)
             return True
         except (discord.HTTPException, OSError):
             return False
 
-    def _overwrites(self, guild: discord.Guild, member: discord.Member, ctx: TicketContext) -> dict:
-        staff_perms = discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            attach_files=True,
-            embed_links=True,
-            read_message_history=True,
-            manage_messages=True,
-        )
-        overwrites: dict = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            guild.me: discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                embed_links=True,
-                attach_files=True,
-                read_message_history=True,
-                manage_channels=True,
-                manage_messages=True,
-            ),
-            member: discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                attach_files=True,
-                embed_links=True,
-                read_message_history=True,
-            ),
-        }
-        for role in roles_by_id(guild, ctx.settings.staff_role_ids):
-            overwrites[role] = staff_perms
-        # A separate ping role must be able to see the ticket or the ping won't notify them.
-        # It gets read/write access but NOT button powers (those are checked by role in the view).
-        for role in roles_by_id(guild, ctx.settings.effective_ping_role_ids):
-            overwrites.setdefault(
-                role, discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
-            )
-        return overwrites
+    async def _send_welcome_dm(
+        self,
+        ctx: TicketContext,
+        guild: discord.Guild,
+        member: discord.Member,
+        ticket: Ticket,
+        extra_role: discord.Role | None,
+    ) -> None:
+        """DM the accepted member the server's welcome text.
+
+        A DM that can't be delivered (closed DMs) becomes a note on the ticket.
+
+        Args:
+            ctx: Fresh ticket settings for the guild.
+            guild: Guild owning the ticket.
+            member: The accepted member.
+            ticket: Their ticket, for the note.
+            extra_role: The extra role staff picked on Accept, named in the DM.
+        """
+        if not await self._dm(member, embeds.welcome_dm(ctx.settings, guild, member, extra_role)):
+            await store.add_note(self.db, ticket.id, WELCOME_DM_FAILED_NOTE)
 
     # ------------------------------------------------------------------ open
 
@@ -170,12 +175,12 @@ class TicketManager:
         ticket = await store.get_active_by_user(self.db, member.guild.id, member.id)
         if (
             ticket
-            and ticket.status == "open"
+            and ticket.status == STATUS_OPEN
             and ticket.channel_id
             and member.guild.get_channel(ticket.channel_id) is None
         ):
             # The channel vanished (deleted while the bot was offline). Log it and treat as no ticket.
-            if await store.claim(self.db, ticket.id, outcome="channel_deleted", handled_by=None):
+            if await store.claim(self.db, ticket.id, outcome=OUTCOME_CHANNEL_DELETED, handled_by=None):
                 self._spawn(self.finalize(ticket.id))
             return None
         return ticket
@@ -200,7 +205,7 @@ class TicketManager:
         category = guild.get_channel(ctx.settings.ticket_category_id or 0)
         if not isinstance(category, discord.CategoryChannel):
             await self.bot.report_issue(
-                guild.id, "tickets.category", "The ticket category no longer exists. Pick a new one on the dashboard."
+                guild.id, ISSUE_CATEGORY, "The ticket category no longer exists. Pick a new one on the dashboard."
             )
             return None, "The ticket system isn't set up correctly yet. Please let a staff member know."
 
@@ -209,7 +214,7 @@ class TicketManager:
         )
         if ticket_id is None:
             existing = await store.get_active_by_user(self.db, guild.id, member.id)
-            if existing and existing.channel_id and existing.status == "open":
+            if existing and existing.channel_id and existing.status == STATUS_OPEN:
                 return None, f"You already have an open application: <#{existing.channel_id}>"
             return None, "Your previous ticket is still being closed. Try again in a few seconds."
 
@@ -235,11 +240,28 @@ class TicketManager:
             except (discord.HTTPException, OSError) as e:
                 log.warning("Guild %s: couldn't remove unused ticket channel %s: %s", guild.id, channel, e)
             return None, "Your application was closed before it finished opening. Please try again."
-        await self.bot.resolve_issue(guild.id, "tickets.create_channel")
-        await self.bot.resolve_issue(guild.id, "tickets.category_full")
+        await self.bot.resolve_issue(guild.id, ISSUE_CREATE_CHANNEL)
+        await self.bot.resolve_issue(guild.id, ISSUE_CATEGORY_FULL)
 
-        from .views import TicketControlView  # local import avoids a circular import
+        await self._post_application(channel, member, ctx, ticket)
+        log.info("Guild %s: opened ticket #%s (%s) for %s", guild.id, ticket_id, channel.name, member.id)
+        return channel, None
 
+    async def _post_application(
+        self, channel: discord.TextChannel, member: discord.Member, ctx: TicketContext, ticket: Ticket
+    ) -> None:
+        """Post the application, the staff buttons and the server's welcome text in a new ticket channel.
+
+        A failure here is only logged: the ticket exists and staff can still
+        see the channel, so the applicant is not sent back to try again.
+
+        Args:
+            channel: The ticket channel that was just created.
+            member: The applicant.
+            ctx: Fresh ticket settings for the guild.
+            ticket: The ticket row, for the application embed.
+        """
+        guild = member.guild
         pings = " ".join(f"<@&{rid}>" for rid in ctx.settings.effective_ping_role_ids)
         intro = render(
             ctx.settings.messages.ticket_intro, user=member.mention, user_name=member.display_name, server=guild.name
@@ -251,11 +273,9 @@ class TicketManager:
                 view=TicketControlView(self.bot),
                 allowed_mentions=discord.AllowedMentions(users=True, roles=True, everyone=False),
             )
-            await channel.send(intro[:2000], allowed_mentions=discord.AllowedMentions.none())
+            await channel.send(intro[:MESSAGE_MAX], allowed_mentions=discord.AllowedMentions.none())
         except (discord.HTTPException, OSError) as e:
             log.warning("Guild %s: created %s but couldn't post the application in it: %s", guild.id, channel, e)
-        log.info("Guild %s: opened ticket #%s (%s) for %s", guild.id, ticket_id, channel.name, member.id)
-        return channel, None
 
     async def _create_channel(
         self, member: discord.Member, ctx: TicketContext, category: discord.CategoryChannel, ticket_id: int
@@ -276,14 +296,14 @@ class TicketManager:
             channel = await guild.create_text_channel(
                 name=ticket_channel_name(member),
                 category=category,
-                overwrites=self._overwrites(guild, member, ctx),
+                overwrites=ticket_overwrites(guild, member, ctx.settings),
                 topic=f"Ticket #{ticket_id} for {member} ({member.id})",
                 reason=f"Ticket for {member} ({member.id})",
             )
         except discord.Forbidden:
             await self.bot.report_issue(
                 guild.id,
-                "tickets.create_channel",
+                ISSUE_CREATE_CHANNEL,
                 f"I couldn't create a ticket channel in **{category.name}**. JoltBot needs Manage Channels and "
                 "Manage Roles there, plus every permission it gives out (View, Send, Attach Files, Embed Links, "
                 "Read History, Manage Messages). Run /tickets diagnostics in Discord for details.",
@@ -291,11 +311,11 @@ class TicketManager:
             return None, "I couldn't create your ticket (missing permissions). Please let a staff member know."
         except discord.HTTPException as e:
             log.warning("Guild %s: failed to create ticket channel: %s", guild.id, e)
-            if len(category.channels) >= 50:
+            if len(category.channels) >= CATEGORY_MAX_CHANNELS:
                 await self.bot.report_issue(
                     guild.id,
-                    "tickets.category_full",
-                    f"The **{category.name}** category is full (Discord allows 50 channels).",
+                    ISSUE_CATEGORY_FULL,
+                    f"The **{category.name}** category is full (Discord allows {CATEGORY_MAX_CHANNELS} channels).",
                 )
                 return None, "The ticket category is full. Please let a staff member know."
             return None, "Discord refused to create the ticket right now. Please try again shortly."
@@ -340,11 +360,11 @@ class TicketManager:
             if not await store.claim(
                 self.db,
                 ticket.id,
-                outcome="accepted",
+                outcome=OUTCOME_ACCEPTED,
                 handled_by=staff.id,
                 extra_role_id=extra_role.id if extra_role else None,
             ):
-                return "Someone else already handled this ticket."
+                return ALREADY_HANDLED
             reason = f"Application accepted by {staff} (ticket #{ticket.id})"
             try:
                 # Add first, then remove: if removal fails they keep access instead of being locked out.
@@ -364,8 +384,7 @@ class TicketManager:
 
             for note in notes:
                 await store.add_note(self.db, ticket.id, note)
-            if not await self._dm(member, embeds.welcome_dm(ctx.settings, guild, member, extra_role)):
-                await store.add_note(self.db, ticket.id, "Welcome DM failed (applicant's DMs are closed).")
+            await self._send_welcome_dm(ctx, guild, member, ticket, extra_role)
             log.info("Guild %s: ticket #%s accepted by %s", guild.id, ticket.id, staff.id)
         finally:
             self._busy.discard(ticket.id)
@@ -446,8 +465,7 @@ class TicketManager:
             # The accept never got as far as the roles, so the welcome DM wasn't sent either.
             await store.add_note(self.db, ticket.id, "Roles were given after a restart.")
             extra_role = guild.get_role(ticket.extra_role_id or 0)
-            if not await self._dm(member, embeds.welcome_dm(ctx.settings, guild, member, extra_role)):
-                await store.add_note(self.db, ticket.id, "Welcome DM failed (applicant's DMs are closed).")
+            await self._send_welcome_dm(ctx, guild, member, ticket, extra_role)
 
     async def deny(
         self, guild: discord.Guild, staff: discord.Member, ticket: Ticket, reason: str, kick: bool
@@ -474,29 +492,10 @@ class TicketManager:
 
         self._busy.add(ticket.id)
         try:
-            if not await store.claim(self.db, ticket.id, outcome="denied", handled_by=staff.id, reason=reason):
-                return "Someone else already handled this ticket."
+            if not await store.claim(self.db, ticket.id, outcome=OUTCOME_DENIED, handled_by=staff.id, reason=reason):
+                return ALREADY_HANDLED
             try:
-                if member is None:
-                    await store.add_note(self.db, ticket.id, "Applicant had already left; no DM sent.")
-                else:
-                    # DM *before* kicking: once they're gone we share no server and the DM usually fails.
-                    if not await self._dm(member, embeds.deny_dm(ctx.settings, guild, member, reason, kick)):
-                        await store.add_note(self.db, ticket.id, "Denial DM failed (applicant's DMs are closed).")
-                    if kick:
-                        try:
-                            await member.kick(reason=f"Application denied by {staff}: {reason}"[:512])
-                            await store.set_kicked(self.db, ticket.id)
-                        except discord.HTTPException as e:
-                            await store.add_note(self.db, ticket.id, f"Kick failed ({e.status}); member was kept.")
-                    else:
-                        # Not kicked: make sure they still have the pending role (if the server uses one).
-                        pending = guild.get_role(ctx.settings.pending_role_id or 0)
-                        if pending and pending not in member.roles:
-                            try:
-                                await member.add_roles(pending, reason="Application denied; kept pending")
-                            except discord.HTTPException:
-                                pass
+                await self._carry_out_denial(guild, staff, ticket, member, ctx, reason, kick)
             except Exception:
                 # The decision is already recorded and the DM may be sent, so finish the ticket
                 # rather than releasing it; the log will show what happened.
@@ -508,6 +507,51 @@ class TicketManager:
         self._spawn(self.finalize(ticket.id))
         return None
 
+    async def _carry_out_denial(
+        self,
+        guild: discord.Guild,
+        staff: discord.Member,
+        ticket: Ticket,
+        member: discord.Member | None,
+        ctx: TicketContext,
+        reason: str,
+        kick: bool,
+    ) -> None:
+        """Tell the applicant they were denied, then kick them or keep them pending.
+
+        Runs after the denial is already saved. Whatever can't be done (closed
+        DMs, a failed kick) becomes a note on the ticket, which the log shows.
+
+        Args:
+            guild: Guild owning the ticket.
+            staff: Staff member who denied, named in the kick's audit-log reason.
+            ticket: The ticket, already claimed with outcome ``denied``.
+            member: The applicant, or ``None`` if they already left.
+            ctx: Fresh ticket settings for the guild.
+            reason: Deny reason, sent in the DM.
+            kick: True to kick the applicant after the DM.
+        """
+        if member is None:
+            await store.add_note(self.db, ticket.id, "Applicant had already left; no DM sent.")
+            return
+        # DM *before* kicking: once they're gone we share no server and the DM usually fails.
+        if not await self._dm(member, embeds.deny_dm(ctx.settings, guild, member, reason, kick)):
+            await store.add_note(self.db, ticket.id, "Denial DM failed (applicant's DMs are closed).")
+        if kick:
+            try:
+                await member.kick(reason=f"Application denied by {staff}: {reason}"[:AUDIT_REASON_MAX])
+                await store.set_kicked(self.db, ticket.id)
+            except discord.HTTPException as e:
+                await store.add_note(self.db, ticket.id, f"Kick failed ({e.status}); member was kept.")
+            return
+        # Not kicked: make sure they still have the pending role (if the server uses one).
+        pending = guild.get_role(ctx.settings.pending_role_id or 0)
+        if pending and pending not in member.roles:
+            try:
+                await member.add_roles(pending, reason="Application denied; kept pending")
+            except discord.HTTPException as e:
+                log.debug("Guild %s: couldn't give the pending role back for ticket #%s: %s", guild.id, ticket.id, e)
+
     async def close(self, staff: discord.Member, ticket: Ticket) -> str | None:
         """Claim the ticket with outcome ``closed`` (no role changes) and finalize.
 
@@ -518,8 +562,8 @@ class TicketManager:
         Returns:
             ``None`` on success, or an error if already claimed.
         """
-        if not await store.claim(self.db, ticket.id, outcome="closed", handled_by=staff.id):
-            return "Someone else already handled this ticket."
+        if not await store.claim(self.db, ticket.id, outcome=OUTCOME_CLOSED, handled_by=staff.id):
+            return ALREADY_HANDLED
         log.info("Guild %s: ticket #%s closed by %s", ticket.guild_id, ticket.id, staff.id)
         self._spawn(self.finalize(ticket.id))
         return None
@@ -534,7 +578,7 @@ class TicketManager:
             user_id: Member who left.
         """
         ticket = await store.get_active_by_user(self.db, guild_id, user_id)
-        if ticket and await store.claim(self.db, ticket.id, outcome="left", handled_by=None):
+        if ticket and await store.claim(self.db, ticket.id, outcome=OUTCOME_LEFT, handled_by=None):
             log.info("Guild %s: applicant %s left; auto-closing ticket #%s", guild_id, user_id, ticket.id)
             self._spawn(self.finalize(ticket.id))
 
@@ -547,11 +591,11 @@ class TicketManager:
         ticket = await store.get_by_channel(self.db, channel_id)
         if ticket is None:
             return
-        if ticket.status == "open" and await store.claim(
-            self.db, ticket.id, outcome="channel_deleted", handled_by=None
+        if ticket.status == STATUS_OPEN and await store.claim(
+            self.db, ticket.id, outcome=OUTCOME_CHANNEL_DELETED, handled_by=None
         ):
             self._spawn(self.finalize(ticket.id))
-        elif ticket.status == "closed":
+        elif ticket.status == STATUS_CLOSED:
             await store.mark_channel_gone(self.db, ticket.id)
 
     # ------------------------------------------------------------------ finalize
@@ -578,14 +622,15 @@ class TicketManager:
             self._busy.discard(ticket_id)
 
     async def _finalize(self, ticket_id: int, resumed: bool) -> None:
+        """The work of ``finalize``, without its run-once guard and error handling."""
         ticket = await store.get(self.db, ticket_id)
-        if ticket is None or ticket.status == "closed":
+        if ticket is None or ticket.status == STATUS_CLOSED:
             return
         guild = self.bot.get_guild(ticket.guild_id)
         if guild is None or guild.unavailable:
             return  # retried later by recover()
         ctx = await load_context(self.bot, guild.id)
-        if resumed and ticket.outcome == "accepted":
+        if resumed and ticket.outcome == OUTCOME_ACCEPTED:
             await self._confirm_accept_roles(guild, ctx, ticket)
         channel = guild.get_channel(ticket.channel_id) if ticket.channel_id else None
         if not isinstance(channel, discord.TextChannel):
@@ -594,30 +639,13 @@ class TicketManager:
         text: str | None = None
         attachments: list[discord.Attachment] = []
         if channel is not None:
-            delay = ctx.settings.delete_delay_seconds
-            try:
-                await channel.send(embed=embeds.closing_embed(ticket, delay))
-            except discord.HTTPException:
-                pass
-            # Stop the applicant from posting while we archive.
-            applicant = guild.get_member(ticket.user_id)
-            if applicant is not None:
-                try:
-                    overwrite = channel.overwrites_for(applicant)
-                    overwrite.send_messages = False
-                    await channel.set_permissions(applicant, overwrite=overwrite, reason="Ticket closing")
-                except discord.HTTPException:
-                    pass
-            try:
-                text, attachments = await build_transcript(channel, ticket)
-            except discord.HTTPException as e:
-                log.warning("Guild %s: couldn't read %s for the transcript: %s", guild.id, channel, e)
+            text, attachments = await self._archive_channel(guild, channel, ticket, ctx)
 
         # Status stays 'closing' until the log is posted, so a crash here is retried.
         await store.stamp_closed_at(self.db, ticket_id)
         ticket = await store.get(self.db, ticket_id)
         assert ticket is not None
-        logged = await self._post_log(guild, ctx, ticket, text, attachments, resumed)
+        logged = await post_log(self.bot, guild, ctx, ticket, text, attachments, resumed)
         await store.mark_closed(self.db, ticket_id, logged=logged)
 
         if channel is None:
@@ -630,21 +658,64 @@ class TicketManager:
                     "(nothing is lost). Once the log channel is fixed, I'll post the transcript and delete this "
                     "channel within a few minutes. The dashboard shows what's wrong."
                 )
-            except discord.HTTPException:
-                pass
+            except discord.HTTPException as e:
+                log.debug("Guild %s: couldn't post the kept-channel notice in %s: %s", guild.id, channel, e)
             return
         await asyncio.sleep(ctx.settings.delete_delay_seconds)
         await self._delete_channel(channel, ticket)
 
+    async def _archive_channel(
+        self, guild: discord.Guild, channel: discord.TextChannel, ticket: Ticket, ctx: TicketContext
+    ) -> tuple[str | None, list[discord.Attachment]]:
+        """Announce the close in the ticket channel, stop the applicant posting, and read the transcript.
+
+        Args:
+            guild: Guild owning the ticket.
+            channel: The ticket channel, still present.
+            ticket: The ticket being closed.
+            ctx: Fresh ticket settings for the guild.
+
+        Returns:
+            ``(transcript_text, attachments)``, or ``(None, [])`` if the channel
+            couldn't be read.
+        """
+        try:
+            await channel.send(embed=embeds.closing_embed(ticket, ctx.settings.delete_delay_seconds))
+        except discord.HTTPException as e:
+            log.debug("Guild %s: couldn't post the closing notice in %s: %s", guild.id, channel, e)
+        # Stop the applicant from posting while we archive.
+        applicant = guild.get_member(ticket.user_id)
+        if applicant is not None:
+            try:
+                overwrite = channel.overwrites_for(applicant)
+                overwrite.send_messages = False
+                await channel.set_permissions(applicant, overwrite=overwrite, reason="Ticket closing")
+            except discord.HTTPException as e:
+                log.debug("Guild %s: couldn't stop the applicant posting in %s: %s", guild.id, channel, e)
+        try:
+            return await build_transcript(channel, ticket)
+        except discord.HTTPException as e:
+            log.warning("Guild %s: couldn't read %s for the transcript: %s", guild.id, channel, e)
+            return None, []
+
     async def _delete_channel(self, channel: discord.abc.GuildChannel, ticket: Ticket) -> None:
+        """Delete a closed ticket's channel and record that it is gone.
+
+        If Discord refuses, the channel stays and the ticket keeps pointing at it,
+        so ``recover`` tries again on a later round.
+
+        Args:
+            channel: The ticket channel.
+            ticket: The closed ticket it belongs to.
+        """
         try:
             await channel.delete(reason=f"Ticket #{ticket.id} closed ({ticket.outcome})")
         except discord.NotFound:
-            pass
+            pass  # already gone, which is what we wanted
         except discord.Forbidden:
             await self.bot.report_issue(
                 ticket.guild_id,
-                "tickets.delete_channel",
+                ISSUE_DELETE_CHANNEL,
                 "I couldn't delete a closed ticket channel. Give JoltBot Manage Channels in the ticket category.",
             )
             return
@@ -652,47 +723,6 @@ class TicketManager:
             log.warning("Guild %s: couldn't delete %s: %s", ticket.guild_id, channel, e)
             return
         await store.mark_channel_gone(self.db, ticket.id)
-
-    async def _post_log(
-        self,
-        guild: discord.Guild,
-        ctx: TicketContext,
-        ticket: Ticket,
-        text: str | None,
-        attachments: list[discord.Attachment],
-        resumed: bool,
-    ) -> bool:
-        log_channel = guild.get_channel(ctx.settings.log_channel_id or 0)
-        if not isinstance(log_channel, discord.TextChannel):
-            await self.bot.report_issue(
-                guild.id,
-                "tickets.log_channel",
-                "The ticket log channel is missing. Pick one on the dashboard. Closed "
-                "tickets are kept (not deleted) until this is fixed.",
-            )
-            return False
-        files = [transcript_file(text, ticket)] if text else []
-        try:
-            await log_channel.send(
-                embed=embeds.log_embed(ticket, resumed=resumed, transcript_ok=text is not None),
-                files=files,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-        except discord.Forbidden:
-            await self.bot.report_issue(
-                guild.id,
-                "tickets.log_channel",
-                f"I can't post in #{log_channel.name}. JoltBot needs View Channel, Send Messages, Embed Links and "
-                "Attach Files there. Closed tickets are kept (not deleted) until this is fixed.",
-            )
-            return False
-        except discord.HTTPException as e:
-            log.warning("Guild %s: failed to post ticket log: %s", guild.id, e)
-            return False
-        await self.bot.resolve_issue(guild.id, "tickets.log_channel")
-        if ctx.settings.reupload_attachments and attachments:
-            await self._reupload(log_channel, ticket, attachments)
-        return True
 
     async def retry_log(self, guild: discord.Guild, ticket_id: int) -> None:
         """Try again to log a closed ticket whose log post failed, then delete its channel.
@@ -717,8 +747,9 @@ class TicketManager:
             self._busy.discard(ticket_id)
 
     async def _retry_log(self, guild: discord.Guild, ticket_id: int) -> None:
+        """The work of ``retry_log``, without its run-once guard and error handling."""
         ticket = await store.get(self.db, ticket_id)
-        if ticket is None or ticket.status != "closed" or ticket.logged or ticket.channel_gone:
+        if ticket is None or ticket.status != STATUS_CLOSED or ticket.logged or ticket.channel_gone:
             return
         channel = guild.get_channel(ticket.channel_id) if ticket.channel_id else None
         if not isinstance(channel, discord.TextChannel):
@@ -738,55 +769,12 @@ class TicketManager:
         except discord.HTTPException as e:
             log.warning("Guild %s: couldn't read %s for the transcript: %s", guild.id, channel, e)
             return
-        if not await self._post_log(guild, ctx, ticket, text, attachments, resumed=True):
+        if not await post_log(self.bot, guild, ctx, ticket, text, attachments, resumed=True):
             return
         await store.mark_logged(self.db, ticket_id)
         log.info("Guild %s: logged ticket #%s on a later try", guild.id, ticket_id)
         await asyncio.sleep(ctx.settings.delete_delay_seconds)
         await self._delete_channel(channel, ticket)
-
-    async def _reupload(
-        self, log_channel: discord.TextChannel, ticket: Ticket, attachments: list[discord.Attachment]
-    ) -> None:
-        """Discord deletes attachments with their channel, so copy them into the log channel."""
-        limit = log_channel.guild.filesize_limit
-        batch: list[discord.File] = []
-        batch_size = 0
-        skipped: list[str] = []
-
-        async def flush() -> None:
-            nonlocal batch, batch_size
-            if batch:
-                try:
-                    await log_channel.send(
-                        f"📎 Attachments from ticket #{ticket.id} (<@{ticket.user_id}>)",
-                        files=batch,
-                        allowed_mentions=discord.AllowedMentions.none(),
-                    )
-                except discord.HTTPException as e:
-                    log.warning("Couldn't re-upload attachments for ticket #%s: %s", ticket.id, e)
-            batch, batch_size = [], 0
-
-        for att in attachments[:MAX_REUPLOADS]:
-            if att.size > limit:
-                skipped.append(att.filename)
-                continue
-            if len(batch) == 10 or batch_size + att.size > limit:
-                await flush()
-            try:
-                batch.append(await att.to_file())
-                batch_size += att.size
-            except discord.HTTPException:
-                skipped.append(att.filename)
-        await flush()
-        if skipped or len(attachments) > MAX_REUPLOADS:
-            message = f"⚠️ Ticket #{ticket.id}: couldn't re-upload {', '.join(skipped)}"
-            if (extra := len(attachments) - MAX_REUPLOADS) > 0:
-                message += f" (+{extra} more over the {MAX_REUPLOADS}-file cap)"
-            try:
-                await log_channel.send(message[:2000])
-            except discord.HTTPException:
-                pass
 
     # ------------------------------------------------------------------ recovery
 
@@ -802,7 +790,7 @@ class TicketManager:
         """
         if guild.unavailable:
             return
-        for t in await store.list_for_guild(self.db, guild.id, "open"):
+        for t in await store.list_for_guild(self.db, guild.id, STATUS_OPEN):
             if t.id in self._busy or t.id in self._creating:
                 continue
             if t.channel_id is None:
@@ -811,12 +799,12 @@ class TicketManager:
                     await store.delete_reservation(self.db, t.id)
                 continue
             if guild.get_channel(t.channel_id) is None:
-                if await store.claim(self.db, t.id, outcome="channel_deleted", handled_by=None):
+                if await store.claim(self.db, t.id, outcome=OUTCOME_CHANNEL_DELETED, handled_by=None):
                     self._spawn(self.finalize(t.id, resumed=True))
             elif guild.get_member(t.user_id) is None and await self._has_left(guild, t.user_id):
-                if await store.claim(self.db, t.id, outcome="left", handled_by=None):
+                if await store.claim(self.db, t.id, outcome=OUTCOME_LEFT, handled_by=None):
                     self._spawn(self.finalize(t.id, resumed=True))
-        for t in await store.list_for_guild(self.db, guild.id, "closing"):
+        for t in await store.list_for_guild(self.db, guild.id, STATUS_CLOSING):
             # claimed_at is None for tickets copied from the old bot; treat those as stuck too.
             if t.id not in self._busy and (t.claimed_at is None or store.older_than(t.claimed_at, STUCK_AFTER_SECONDS)):
                 self._spawn(self.finalize(t.id, resumed=True))
@@ -834,5 +822,6 @@ class TicketManager:
 
 
 def _log_task_errors(task: asyncio.Task) -> None:
+    """Done-callback for background ticket tasks: log an error that would otherwise vanish."""
     if not task.cancelled() and (exc := task.exception()):
         log.error("Background ticket task failed", exc_info=exc)

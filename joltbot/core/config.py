@@ -47,21 +47,25 @@ class AppConfig(BaseSettings):
     @field_validator("public_base_url")
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
+        """Accept ``PUBLIC_BASE_URL`` with or without a trailing slash; paths are appended to it."""
         return value.strip().rstrip("/")
 
     @field_validator("alert_webhook_url")
     @classmethod
     def _strip(cls, value: str) -> str:
+        """Ignore stray spaces around the webhook URL."""
         return value.strip()
 
     @field_validator("log_level", mode="before")
     @classmethod
     def _upper(cls, value: object) -> object:
+        """Accept ``LOG_LEVEL`` in any case (``info`` works like ``INFO``)."""
         return value.strip().upper() if isinstance(value, str) else value
 
     @field_validator("log_format", mode="before")
     @classmethod
     def _lower(cls, value: object) -> object:
+        """Accept ``LOG_FORMAT`` in any case (``JSON`` works like ``json``)."""
         return value.strip().lower() if isinstance(value, str) else value
 
     @property

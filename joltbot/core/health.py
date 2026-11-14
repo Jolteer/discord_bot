@@ -42,6 +42,7 @@ async def write_heartbeat(session: AsyncSession, now: datetime | None = None) ->
 
 
 def _parse(value: str | None) -> datetime | None:
+    """Read a stored heartbeat. Anything unreadable, or without a timezone, counts as none."""
     try:
         parsed = datetime.fromisoformat(value) if value else None
     except ValueError:

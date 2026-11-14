@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Request
+from fastapi.responses import Response
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, select_autoescape
 
@@ -49,7 +50,9 @@ def nav_modules() -> list[dict[str, str]]:
     return [{"name": m.name, "title": m.title} for m in MODULES.values() if m.web]
 
 
-async def render(request: Request, template: str, context: dict[str, Any] | None = None, status_code: int = 200):
+async def render(
+    request: Request, template: str, context: dict[str, Any] | None = None, status_code: int = 200
+) -> Response:
     """Render a Jinja template with shared base context (user, CSRF, invite URL).
 
     Args:

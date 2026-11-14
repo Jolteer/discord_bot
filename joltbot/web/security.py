@@ -27,6 +27,7 @@ from ..core.discord_rest import DiscordClient, DiscordError, DiscordUnauthorized
 from ..core.guild_settings import Actor, load_module
 from ..core.models import Guild, WebSession
 from ..core.permissions import can_manage_guild, is_administrator
+from ..modules.general.settings import MODULE as GENERAL
 from .sessions import delete_session, load_session, user_guilds
 
 SESSION_COOKIE = "joltbot_session"
@@ -40,6 +41,8 @@ class LoginRequired(Exception):
 
 @dataclass(frozen=True)
 class UserGuild:
+    """One server from the logged-in user's Discord server list, and what they may do there."""
+
     id: int
     name: str
     icon: str | None
@@ -49,10 +52,19 @@ class UserGuild:
 
     @property
     def icon_url(self) -> str | None:
+        """Address of the server's icon on Discord's CDN, or ``None`` if it has none."""
         return f"https://cdn.discordapp.com/icons/{self.id}/{self.icon}.png?size=64" if self.icon else None
 
 
 def parse_user_guilds(raw: list[dict[str, Any]]) -> list[UserGuild]:
+    """Turn Discord's ``/users/@me/guilds`` answer into ``UserGuild`` objects.
+
+    Args:
+        raw: The list as Discord sent it (also what the session caches).
+
+    Returns:
+        One ``UserGuild`` per server, with the permission flags worked out.
+    """
     return [
         UserGuild(
             int(g["id"]),
@@ -70,18 +82,22 @@ def parse_user_guilds(raw: list[dict[str, Any]]) -> list[UserGuild]:
 
 
 def get_config(request: Request) -> AppConfig:
+    """The process settings, put on the app at start-up."""
     return request.app.state.config
 
 
 def get_db(request: Request) -> Database:
+    """The dashboard's database."""
     return request.app.state.db
 
 
 def get_discord(request: Request) -> DiscordClient:
+    """The dashboard's Discord REST client (a stand-in in tests and in the site preview)."""
     return request.app.state.discord
 
 
 def session_cookie_name(config: AppConfig) -> str:
+    """Which session cookie to use: the ``__Host-`` one whenever the site is served over HTTPS."""
     return SECURE_SESSION_COOKIE if config.uses_https else SESSION_COOKIE
 
 
@@ -162,10 +178,12 @@ class GuildAccess:
 
     @property
     def guild_id(self) -> int:
+        """The server's ID. It comes from the checked URL, never from a form."""
         return self.guild.id
 
     @property
     def actor(self) -> Actor:
+        """The logged-in user, in the form the audit log records."""
         return Actor(user_id=self.session.user_id, name=self.session.username, source="dashboard")
 
 
@@ -194,7 +212,7 @@ async def role_access(request: Request, ws: WebSession, guild_id: int) -> Guild 
         guild = await session.get(Guild, guild_id)
         if guild is None or not guild.active:
             return None
-        allowed = set((await load_module(session, guild_id, "general")).config.dashboard_role_ids)
+        allowed = set((await load_module(session, guild_id, GENERAL)).config.dashboard_role_ids)
     if not allowed:
         return None
     # Asked with the bot token, after the database session is closed.
@@ -303,6 +321,7 @@ async def verify_csrf(request: Request) -> None:
 
 
 def _origin_of(url: str) -> str:
+    """Scheme and host of a URL: the form in which browsers send the Origin header."""
     parts = urlsplit(url)
     return f"{parts.scheme}://{parts.netloc}"
 

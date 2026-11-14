@@ -28,6 +28,13 @@ from .client import JoltBot
 EXIT_BAD_TOKEN = 2
 EXIT_BAD_SETUP = 3
 
+# After a crash the bot waits before starting again: 10 seconds at first, doubling
+# each time up to 5 minutes.
+RETRY_FIRST_SECONDS = 10
+RETRY_MAX_SECONDS = 300
+# A run that lasted this long counts as healthy, so the next crash starts the waits over.
+HEALTHY_RUN_SECONDS = 600
+
 log = logging.getLogger("joltbot.bot")
 
 
@@ -106,6 +113,41 @@ def send_test_alert(url: str) -> int:
     return 0
 
 
+def run_forever() -> None:
+    """Run the bot, starting it again after any error a retry might fix.
+
+    Returns when the bot shut down cleanly (SIGTERM or Ctrl+C). Exits the
+    process with ``EXIT_BAD_TOKEN`` or ``EXIT_BAD_SETUP`` for the two problems
+    that retrying can't fix.
+    """
+    delay = RETRY_FIRST_SECONDS
+    while True:
+        started = time.monotonic()
+        try:
+            asyncio.run(run_once())
+            return  # clean shutdown
+        except KeyboardInterrupt:
+            return
+        except discord.LoginFailure:
+            log.critical(
+                "Discord rejected the token. Reset it in the Developer Portal (Bot → Reset Token) "
+                "and update DISCORD_TOKEN in .env."
+            )
+            sys.exit(EXIT_BAD_TOKEN)
+        except discord.PrivilegedIntentsRequired:
+            log.critical(
+                "Privileged intents are off. Developer Portal → your app → Bot → turn ON 'Server Members "
+                "Intent' and 'Message Content Intent', save, then restart."
+            )
+            sys.exit(EXIT_BAD_SETUP)
+        except Exception:
+            log.exception("JoltBot stopped unexpectedly; starting again in %ss", delay)
+        if time.monotonic() - started > HEALTHY_RUN_SECONDS:
+            delay = RETRY_FIRST_SECONDS  # it ran fine for a while, so start the back-off over
+        time.sleep(delay)
+        delay = min(delay * 2, RETRY_MAX_SECONDS)
+
+
 def main() -> None:
     """CLI entry: validate setup, then connect with forever-retry on transient errors.
 
@@ -129,33 +171,7 @@ def main() -> None:
     if problem := asyncio.run(check_database(config.database_url)):
         log.critical(problem)
         sys.exit(EXIT_BAD_SETUP)
-
-    delay = 10
-    while True:
-        started = time.monotonic()
-        try:
-            asyncio.run(run_once())
-            return  # clean shutdown
-        except KeyboardInterrupt:
-            return
-        except discord.LoginFailure:
-            log.critical(
-                "Discord rejected the token. Reset it in the Developer Portal (Bot → Reset Token) "
-                "and update DISCORD_TOKEN in .env."
-            )
-            sys.exit(EXIT_BAD_TOKEN)
-        except discord.PrivilegedIntentsRequired:
-            log.critical(
-                "Privileged intents are off. Developer Portal → your app → Bot → turn ON 'Server Members "
-                "Intent' and 'Message Content Intent', save, then restart."
-            )
-            sys.exit(EXIT_BAD_SETUP)
-        except Exception:
-            log.exception("JoltBot stopped unexpectedly; starting again in %ss", delay)
-        if time.monotonic() - started > 600:
-            delay = 10  # it ran fine for a while, so start the back-off over
-        time.sleep(delay)
-        delay = min(delay * 2, 300)
+    run_forever()
 
 
 if __name__ == "__main__":

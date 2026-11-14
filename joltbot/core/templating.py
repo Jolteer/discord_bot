@@ -30,6 +30,7 @@ def render(template: str, **values: object) -> str:
     """
 
     def replace(match: re.Match[str]) -> str:
+        """Swap one ``{name}`` for its value. An unknown name is left exactly as typed."""
         name = ALIASES.get(match.group(1), match.group(1))
         if name in values:
             return str(values[name])

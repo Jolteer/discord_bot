@@ -45,10 +45,19 @@ SYSTEM_ACTOR = Actor(None, "JoltBot", "system")
 
 @dataclass(frozen=True)
 class ModuleState(Generic[T]):
+    """One module's settings for one server, as loaded from the database.
+
+    Attributes:
+        module: The module's registry name.
+        enabled: Whether it is switched on. Always True for a module that can't be toggled.
+        config: The validated settings; defaults if nothing is saved yet.
+        version: Bumped on every save; 0 means no row has been saved yet.
+    """
+
     module: str
     enabled: bool
     config: T
-    version: int  # 0 = no row saved yet
+    version: int
 
 
 class StaleSettingsError(Exception):
@@ -56,6 +65,16 @@ class StaleSettingsError(Exception):
 
 
 def _state_from_row(module: str, row: ModuleSetting | None) -> ModuleState[Any]:
+    """Turn a stored row, or the lack of one, into a ``ModuleState``.
+
+    Args:
+        module: The module's registry name.
+        row: Its saved row for one server, or ``None`` if there is none.
+
+    Returns:
+        The state to act on. Missing or invalid settings give defaults with the
+        module switched off, unless the module is one that is always on.
+    """
     info = get_module(module)
     # Modules that can't be toggled (like "general") are always on.
     always_on = not info.toggleable

@@ -17,6 +17,8 @@ RETENTION = timedelta(days=30)
 
 @dataclass(frozen=True)
 class GuildInfo:
+    """What the bot tells the database about a server: its ID, name and icon hash."""
+
     id: int
     name: str
     icon: str | None = None

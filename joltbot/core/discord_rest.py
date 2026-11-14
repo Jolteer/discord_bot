@@ -19,11 +19,20 @@ from urllib.parse import urlencode
 
 import httpx
 
+from .permissions import DISCORD_AUTHORIZE_URL
+
 log = logging.getLogger(__name__)
 
 API = "https://discord.com/api/v10"
-AUTHORIZE_URL = "https://discord.com/oauth2/authorize"
+CDN = "https://cdn.discordapp.com"
+AUTHORIZE_URL = DISCORD_AUTHORIZE_URL
 OAUTH_SCOPES = "identify guilds"
+# Discord's OAuth access tokens last a week; used when a token response doesn't say.
+DEFAULT_TOKEN_LIFETIME_SECONDS = 604800
+HTTP_TIMEOUT_SECONDS = 10
+# A rate limit shorter than this is waited out and the call retried once; a longer one is an error.
+MAX_RATE_LIMIT_WAIT_SECONDS = 5
+EMOJI_PREVIEW_SIZE = 32  # pixels, for the small emoji image next to a dashboard field
 GUILD_CACHE_SECONDS = 60
 # How long one member's roles are trusted. Someone who loses a dashboard access role
 # keeps dashboard access for at most this long.
@@ -38,6 +47,12 @@ class DiscordError(Exception):
     """Discord returned an error or couldn't be reached."""
 
     def __init__(self, message: str, status: int | None = None) -> None:
+        """Keep the HTTP status next to the message.
+
+        Args:
+            message: What went wrong, safe to show to a dashboard user.
+            status: The HTTP status Discord answered with, or ``None`` if it couldn't be reached.
+        """
         super().__init__(message)
         self.status = status
 
@@ -48,6 +63,17 @@ class DiscordUnauthorized(DiscordError):
 
 @dataclass(frozen=True)
 class Role:
+    """A server role, as Discord's REST API describes it.
+
+    Attributes:
+        id: The role's Discord ID.
+        name: Its name, without the leading ``@``.
+        position: Its place in the role list; higher numbers are higher up.
+        permissions: Its permission bitfield (see ``core/permissions.py``).
+        managed: True for a role owned by a bot or integration; nobody can assign those.
+        color: ``0xRRGGBB``, or 0 for a role with no colour of its own.
+    """
+
     id: int
     name: str
     position: int
@@ -58,6 +84,16 @@ class Role:
 
 @dataclass(frozen=True)
 class Channel:
+    """A server channel or category.
+
+    Attributes:
+        id: The channel's Discord ID.
+        name: Its name, without the leading ``#``.
+        type: Discord's channel type number (see the constants above).
+        position: Its place in the channel list, within its category.
+        parent_id: The category it sits in, or ``None``.
+    """
+
     id: int
     name: str
     type: int
@@ -75,7 +111,8 @@ class Emoji:
 
     @property
     def url(self) -> str:
-        return f"https://cdn.discordapp.com/emojis/{self.id}.{'gif' if self.animated else 'png'}?size=32"
+        """Address of the emoji's image on Discord's CDN, small enough to sit beside a form field."""
+        return f"{CDN}/emojis/{self.id}.{'gif' if self.animated else 'png'}?size={EMOJI_PREVIEW_SIZE}"
 
 
 @dataclass(frozen=True)
@@ -92,15 +129,19 @@ class GuildData:
 
     @property
     def role_ids(self) -> set[int]:
+        """The ID of every role in the server (@everyone is not included)."""
         return {r.id for r in self.roles}
 
     def text_channels(self) -> list[Channel]:
+        """Channels a message can be posted in: text and announcement channels."""
         return [c for c in self.channels if c.type in (TEXT_CHANNEL, ANNOUNCEMENT_CHANNEL)]
 
     def categories(self) -> list[Channel]:
+        """The server's categories."""
         return [c for c in self.channels if c.type == CATEGORY]
 
     def bot_top_position(self) -> int:
+        """Position of JoltBot's highest role. It can only give or remove roles below that."""
         positions = [r.position for r in self.roles if r.id in self.bot_role_ids]
         return max(positions, default=0)
 
@@ -113,7 +154,70 @@ class GuildData:
         return bits
 
 
+def _parse_roles(raw_roles: list[dict[str, Any]], guild_id: int) -> list[Role]:
+    """Discord's role objects as ``Role``s, highest first, without @everyone."""
+    return sorted(
+        (
+            Role(
+                int(r["id"]),
+                r["name"],
+                r["position"],
+                int(r["permissions"]),
+                r.get("managed", False),
+                r.get("color", 0),
+            )
+            for r in raw_roles
+            if int(r["id"]) != guild_id
+        ),
+        key=lambda r: r.position,
+        reverse=True,
+    )
+
+
+def _parse_channels(raw_channels: list[dict[str, Any]]) -> list[Channel]:
+    """Discord's channel objects as ``Channel``s, in the order the Discord app shows them."""
+    return sorted(
+        (
+            Channel(
+                int(c["id"]),
+                c["name"],
+                c["type"],
+                c.get("position", 0),
+                int(c["parent_id"]) if c.get("parent_id") else None,
+            )
+            for c in raw_channels
+        ),
+        key=lambda c: (c.position, c.id),
+    )
+
+
+def _parse_emojis(raw_emojis: list[dict[str, Any]]) -> list[Emoji]:
+    """The server's usable emojis, by name. Ones Discord marks unavailable are left out."""
+    return sorted(
+        (
+            Emoji(int(e["id"]), e["name"], bool(e.get("animated")))
+            for e in raw_emojis
+            if e.get("id") and e.get("name") and e.get("available", True)
+        ),
+        key=lambda e: e.name.lower(),
+    )
+
+
 class DiscordClient:
+    """Discord REST client for the dashboard, with per-server and per-member caches.
+
+    One instance lives for the whole dashboard process (``app.state.discord``).
+    Its caches are in memory, which is one reason the dashboard runs as a single
+    worker: a second worker would have its own, separately ageing copies.
+
+    Args:
+        client_id: The application's OAuth2 client ID.
+        client_secret: Its OAuth2 client secret.
+        bot_token: The bot token, for calls made as JoltBot.
+        redirect_uri: Where Discord sends the browser back after login.
+        http: A ready-made HTTP client; tests pass a fake one.
+    """
+
     def __init__(
         self,
         *,
@@ -123,11 +227,12 @@ class DiscordClient:
         redirect_uri: str,
         http: httpx.AsyncClient | None = None,
     ) -> None:
+        """Store the credentials and start with empty caches."""
         self.client_id = client_id
         self.client_secret = client_secret
         self.bot_token = bot_token
         self.redirect_uri = redirect_uri
-        self.http = http or httpx.AsyncClient(timeout=10, headers={"User-Agent": "JoltBot dashboard"})
+        self.http = http or httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS, headers={"User-Agent": "JoltBot dashboard"})
         self._cache: dict[int, GuildData] = {}
         self._locks: dict[int, asyncio.Lock] = {}
         self._bot_user_id: int | None = None
@@ -135,6 +240,7 @@ class DiscordClient:
         self._member_roles: dict[tuple[int, int], tuple[float, frozenset[int]]] = {}
 
     async def aclose(self) -> None:
+        """Close the HTTP client. Called once, when the dashboard shuts down."""
         await self.http.aclose()
 
     # ------------------------------------------------------------------ low level
@@ -147,9 +253,10 @@ class DiscordClient:
                 response = await self.http.request(method, url, headers={"Authorization": auth}, **kwargs)
             except httpx.HTTPError as e:
                 raise DiscordError(f"Couldn't reach Discord ({e.__class__.__name__}).") from e
+            # 429 = rate limited. Discord says how long to wait; a short wait is sat out once.
             if response.status_code == 429 and attempt == 0:
                 retry_after = float(response.json().get("retry_after", 1))
-                if retry_after <= 5:
+                if retry_after <= MAX_RATE_LIMIT_WAIT_SECONDS:
                     await asyncio.sleep(retry_after)
                     continue
             if response.status_code == 401:
@@ -197,14 +304,17 @@ class DiscordClient:
         return response.json()
 
     async def get_user(self, access_token: str) -> dict[str, Any]:
+        """Who the logged-in user is (``GET /users/@me`` with their access token)."""
         return await self._request("GET", "/users/@me", auth=f"Bearer {access_token}")
 
     async def get_user_guilds(self, access_token: str) -> list[dict[str, Any]]:
+        """The servers the logged-in user is in, each with their permissions there."""
         return await self._request("GET", "/users/@me/guilds", auth=f"Bearer {access_token}")
 
     # ------------------------------------------------------------------ bot token
 
     async def bot_user_id(self) -> int:
+        """JoltBot's own user ID, fetched once and then remembered."""
         if self._bot_user_id is None:
             me = await self._request("GET", "/users/@me", auth=f"Bot {self.bot_token}")
             self._bot_user_id = int(me["id"])
@@ -223,55 +333,21 @@ class DiscordClient:
             member = await self._request("GET", f"/guilds/{guild_id}/members/{await self.bot_user_id()}", auth=auth)
             raw_emojis = await self._request("GET", f"/guilds/{guild_id}/emojis", auth=auth)
 
+            # The @everyone role has the same ID as the server itself.
             everyone = next((r for r in raw_roles if int(r["id"]) == guild_id), None)
-            roles = sorted(
-                (
-                    Role(
-                        int(r["id"]),
-                        r["name"],
-                        r["position"],
-                        int(r["permissions"]),
-                        r.get("managed", False),
-                        r.get("color", 0),
-                    )
-                    for r in raw_roles
-                    if int(r["id"]) != guild_id
-                ),
-                key=lambda r: r.position,
-                reverse=True,
-            )
-            channels = sorted(
-                (
-                    Channel(
-                        int(c["id"]),
-                        c["name"],
-                        c["type"],
-                        c.get("position", 0),
-                        int(c["parent_id"]) if c.get("parent_id") else None,
-                    )
-                    for c in raw_channels
-                ),
-                key=lambda c: (c.position, c.id),
-            )
             data = GuildData(
                 guild_id,
-                roles,
-                channels,
+                _parse_roles(raw_roles, guild_id),
+                _parse_channels(raw_channels),
                 int(everyone["permissions"]) if everyone else 0,
                 [int(r) for r in member.get("roles", [])],
-                emojis=sorted(
-                    (
-                        Emoji(int(e["id"]), e["name"], bool(e.get("animated")))
-                        for e in raw_emojis
-                        if e.get("id") and e.get("name") and e.get("available", True)
-                    ),
-                    key=lambda e: e.name.lower(),
-                ),
+                emojis=_parse_emojis(raw_emojis),
             )
             self._cache[guild_id] = data
             return data
 
     def forget_guild(self, guild_id: int) -> None:
+        """Drop one server's cached roles and channels, so the next page load fetches them again."""
         self._cache.pop(guild_id, None)
 
     async def member_role_ids(self, guild_id: int, user_id: int) -> frozenset[int]:

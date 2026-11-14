@@ -10,6 +10,7 @@ tests) sets sqlalchemy.url explicitly.
 
 import asyncio
 from logging.config import fileConfig
+from typing import Any
 
 from alembic import context
 from sqlalchemy.engine import Connection
@@ -26,7 +27,7 @@ if config.config_file_name is not None and config.attributes.get("configure_logg
 target_metadata = Base.metadata
 
 
-def render_item(type_, obj, autogen_context):
+def render_item(type_: str, obj: Any, autogen_context: Any) -> str | bool:
     """Write our UTCDateTime column type as a plain timestamp in migration files,
     so old migrations never depend on code in models.py."""
     if type_ == "type" and isinstance(obj, UTCDateTime):
@@ -35,6 +36,7 @@ def render_item(type_, obj, autogen_context):
 
 
 def database_url() -> str:
+    """The database to migrate: an explicit ``sqlalchemy.url`` (tests), otherwise ``DATABASE_URL``."""
     return config.get_main_option("sqlalchemy.url") or get_config().database_url
 
 
@@ -53,6 +55,7 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
+    """Run the migrations on an open connection."""
     # render_as_batch: SQLite can't ALTER most things in place, so Alembic
     # rebuilds the table instead. Harmless on Postgres.
     context.configure(
@@ -63,6 +66,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
+    """Open the database and run the migrations on it."""
     # Reuse our Database class so SQLite gets the same settings (WAL, foreign keys)
     # and the data/ folder is created if needed.
     db = Database(database_url())

@@ -5,16 +5,18 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from pydantic import ValidationError
 
 from ...core.discord_rest import DiscordError, GuildData
-from ...core.guild_settings import StaleSettingsError, load_all, save_module
+from ...core.guild_settings import ModuleState, StaleSettingsError, load_all, save_module
+from ...web.form_helpers import STALE_SETTINGS, form_version
+from ...web.options import text_channel_options
 from ...web.rendering import render
 from ...web.routes.guild import guild_context
 from ...web.security import CsrfProtected, GuildAccess, RequireGuild, get_db, get_discord
 from ..registry import MODULES
-from .settings import GeneralSettings
+from .settings import MODULE, GeneralSettings
 
 router = APIRouter(prefix="/servers/{guild_id}/general")
 
@@ -31,17 +33,6 @@ async def _guild_data(request: Request, access: GuildAccess) -> GuildData | None
         return None
 
 
-def _channel_options(data: GuildData | None) -> list[dict[str, Any]] | None:
-    """Text channels in the shape the ``channel_select`` macro needs (IDs as strings)."""
-    if data is None:
-        return None
-    categories = {c.id: c.name for c in data.categories()}
-    return [
-        {"id": str(c.id), "name": c.name, "category": categories.get(c.parent_id or 0, "")}
-        for c in data.text_channels()
-    ]
-
-
 async def _render(
     request: Request,
     access: GuildAccess,
@@ -54,7 +45,8 @@ async def _render(
     errors: list[str],
     saved: bool = False,
     status_code: int = 200,
-):
+) -> Response:
+    """Render the General page from the given values: the saved ones, or what was typed if a save failed."""
     modules = [
         {"name": m.name, "title": m.title, "description": m.description, "enabled": toggles.get(m.name, False)}
         for m in MODULES.values()
@@ -64,10 +56,11 @@ async def _render(
         request,
         "general/settings.html",
         {
-            **guild_context(access, "general"),
+            **guild_context(access, MODULE),
             "embed_color": color,
             "notice_channel_id": notice_channel_id,
-            "text_channels": _channel_options(data),  # None = Discord couldn't be reached
+            # None = Discord couldn't be reached.
+            "text_channels": text_channel_options(data) if data is not None else None,
             "modules": modules,
             "versions": versions,
             "errors": errors,
@@ -78,12 +71,12 @@ async def _render(
 
 
 @router.get("")
-async def show(request: Request, access: RequireGuild, saved: bool = False):
+async def show(request: Request, access: RequireGuild, saved: bool = False) -> Response:
     """Render the general settings page (embed colour, notices channel, module toggles).
 
     Args:
         request: FastAPI request.
-        access: Authenticated guild manager (``RequireGuild``).
+        access: Anyone who may use this server's dashboard (``RequireGuild``).
         saved: Query flag to show the success banner after a redirect.
 
     Returns:
@@ -92,7 +85,7 @@ async def show(request: Request, access: RequireGuild, saved: bool = False):
     data = await _guild_data(request, access)
     async with get_db(request).session() as session:
         states = await load_all(session, access.guild_id)
-    general: GeneralSettings = states["general"].config
+    general: GeneralSettings = states[MODULE].config
     return await _render(
         request,
         access,
@@ -107,6 +100,7 @@ async def show(request: Request, access: RequireGuild, saved: bool = False):
 
 
 def _validation_errors(exc: ValidationError) -> list[str]:
+    """Turn a Pydantic validation error into the sentences shown above the form."""
     fields = {str(err["loc"][0]) for err in exc.errors() if err["loc"]}
     errors = []
     if "embed_color" in fields:
@@ -133,13 +127,37 @@ def _notice_channel_error(new: GeneralSettings, old: GeneralSettings, data: Guil
     return None
 
 
+def _save_errors(
+    general: GeneralSettings, states: dict[str, ModuleState[Any]], toggles: dict[str, bool], data: GuildData | None
+) -> list[str]:
+    """Why this save can't go through, checked against what is stored right now.
+
+    Args:
+        general: The general settings from the form.
+        states: Every module's saved settings for this server.
+        toggles: The on/off switch for each module, as submitted.
+        data: The server's channels from Discord, or ``None`` if Discord can't be reached.
+
+    Returns:
+        Error lines for the form; empty if the save may go ahead. A module can
+        only be switched on once its own setup is complete.
+    """
+    errors = []
+    if error := _notice_channel_error(general, states[MODULE].config, data):
+        errors.append(error)
+    for name, enabled in toggles.items():
+        if enabled and not states[name].enabled and (problems := states[name].config.setup_problems()):
+            errors.append(f"{MODULES[name].title} isn't set up yet: " + " ".join(problems))
+    return errors
+
+
 @router.post("", dependencies=[CsrfProtected])
-async def save(request: Request, access: RequireGuild):
+async def save(request: Request, access: RequireGuild) -> Response:
     """Persist general settings and module enable flags with optimistic concurrency.
 
     Args:
         request: FastAPI request (form body + CSRF).
-        access: Authenticated guild manager.
+        access: Anyone who may use this server's dashboard (``RequireGuild``).
 
     Returns:
         Redirect to GET with ``?saved=1``, or the form with errors (400).
@@ -151,15 +169,11 @@ async def save(request: Request, access: RequireGuild):
     color = str(form.get("embed_color", "")).strip()
     notice_channel_id = str(form.get("notice_channel_id", "")).strip()
     toggles = {name: f"enabled_{name}" in form for name, m in MODULES.items() if m.toggleable}
-    versions = {}
-    for name in MODULES:
-        try:
-            versions[name] = int(form.get(f"version_{name}", "-1"))
-        except ValueError:
-            versions[name] = -1
+    versions = {name: form_version(form, f"version_{name}") for name in MODULES}
     data = await _guild_data(request, access)  # before the transaction: never hold one across a Discord call
 
-    async def fail(errors: list[str]):
+    async def fail(errors: list[str]) -> Response:
+        """Show the form again with what was typed and why it wasn't saved (HTTP 400)."""
         return await _render(
             request,
             access,
@@ -180,24 +194,18 @@ async def save(request: Request, access: RequireGuild):
     try:
         async with get_db(request).session() as session, session.begin():
             states = await load_all(session, access.guild_id)
-            errors = []
-            if error := _notice_channel_error(general, states["general"].config, data):
-                errors.append(error)
-            for name, enabled in toggles.items():
-                if enabled and not states[name].enabled and (problems := states[name].config.setup_problems()):
-                    errors.append(f"{MODULES[name].title} isn't set up yet: " + " ".join(problems))
-            if errors:
+            if errors := _save_errors(general, states, toggles, data):
                 return await fail(errors)
             # This form has no field for who may use the dashboard. Keep what is stored,
             # so saving General can never change it (people let in by a role can save here).
-            general = general.model_copy(update={"dashboard_role_ids": states["general"].config.dashboard_role_ids})
+            general = general.model_copy(update={"dashboard_role_ids": states[MODULE].config.dashboard_role_ids})
             await save_module(
                 session,
                 access.guild_id,
-                "general",
+                MODULE,
                 enabled=True,
                 config=general,
-                expected_version=versions["general"],
+                expected_version=versions[MODULE],
                 actor=access.actor,
             )
             for name, enabled in toggles.items():
@@ -211,5 +219,5 @@ async def save(request: Request, access: RequireGuild):
                     actor=access.actor,
                 )
     except StaleSettingsError:
-        return await fail(["Someone else saved settings while you were editing. Reload the page and try again."])
+        return await fail([STALE_SETTINGS])
     return RedirectResponse(f"/servers/{access.guild_id}/general?saved=1", status_code=303)

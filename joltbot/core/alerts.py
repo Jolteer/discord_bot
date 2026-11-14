@@ -27,21 +27,26 @@ import urllib.request
 from collections.abc import Callable
 from logging.handlers import QueueHandler, QueueListener
 
+from .limits import MESSAGE_MAX
+
 log = logging.getLogger(__name__)
 
 DEDUPE_SECONDS = 600
 WINDOW_SECONDS = 600
 MAX_PER_WINDOW = 10
-MAX_CONTENT = 2000  # Discord's limit for a message
+MAX_CONTENT = MESSAGE_MAX  # an alert is one Discord message
 QUEUE_SIZE = 200
 SECONDS_BETWEEN_POSTS = 0.5  # Discord allows 5 webhook posts per 2 seconds
+WEBHOOK_TIMEOUT_SECONDS = 5
+TRACEBACK_HEAD_CHARS = 300  # how much of the start of an over-long message is kept
+MAX_REMEMBERED_ALERTS = 500  # de-duplication entries kept before expired ones are dropped
 
 
 class AlertError(Exception):
     """The webhook couldn't be reached or refused the message. Never contains the URL."""
 
 
-def post_to_webhook(url: str, content: str, timeout: float = 5) -> None:
+def post_to_webhook(url: str, content: str, timeout: float = WEBHOOK_TIMEOUT_SECONDS) -> None:
     """Post one message to a Discord webhook. Blocks; call it off the event loop.
 
     Args:
@@ -89,8 +94,7 @@ def format_alert(process_name: str, record: logging.LogRecord, repeats: int = 0)
     body = record.getMessage().replace("```", "'''")  # can't break out of the code block
     room = MAX_CONTENT - len(head) - len("\n```\n\n```")
     if len(body) > room:
-        keep_start = 300
-        body = body[:keep_start] + "\n…\n" + body[-(room - keep_start - 3) :]
+        body = body[:TRACEBACK_HEAD_CHARS] + "\n…\n" + body[-(room - TRACEBACK_HEAD_CHARS - 3) :]
     return f"{head}\n```\n{body}\n```"
 
 
@@ -117,6 +121,7 @@ class WebhookAlertHandler(logging.Handler):
         clock: Callable[[], float] = time.monotonic,
         pause: Callable[[float], None] = time.sleep,
     ) -> None:
+        """Create the handler with nothing sent yet (see the class docstring for the arguments)."""
         super().__init__(level=logging.ERROR)
         self._url = url
         self._process_name = process_name
@@ -129,6 +134,7 @@ class WebhookAlertHandler(logging.Handler):
         self._window_count = 0
 
     def emit(self, record: logging.LogRecord) -> None:
+        """Send one record as an alert. Never raises: a failure is printed to stderr."""
         try:
             self._emit(record)
         except Exception as e:
@@ -137,6 +143,12 @@ class WebhookAlertHandler(logging.Handler):
             print(f"JoltBot alert not delivered: {e}", file=sys.stderr)
 
     def _emit(self, record: logging.LogRecord) -> None:
+        """Decide whether this record becomes an alert, and post it if so.
+
+        Not posted: records below ERROR, this module's own records, a repeat within
+        ``DEDUPE_SECONDS`` (counted and mentioned in the next alert), and anything past
+        ``MAX_PER_WINDOW`` in the current window (one "muted" notice is posted instead).
+        """
         # The level is checked here too, so this is safe however the handler is attached.
         if record.levelno < self.level or record.name == __name__:
             return
@@ -159,12 +171,13 @@ class WebhookAlertHandler(logging.Handler):
                 )
             return
 
-        if len(self._last_sent) > 500:  # forget old entries so this can't grow forever
+        if len(self._last_sent) > MAX_REMEMBERED_ALERTS:  # forget old entries so this can't grow forever
             self._last_sent = {k: t for k, t in self._last_sent.items() if now - t < DEDUPE_SECONDS}
         self._last_sent[key] = now
         self._post(format_alert(self._process_name, record, self._skipped.pop(key, 0)))
 
     def _post(self, content: str) -> None:
+        """Post one message, then pause so a burst stays under Discord's webhook rate limit."""
         try:
             (self._send or post_to_webhook)(self._url, content)
         finally:
@@ -175,6 +188,7 @@ class _AlertQueueHandler(QueueHandler):
     """Hands ERROR records to the alert thread without ever blocking the caller."""
 
     def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        """Format the record for the alert thread and attach the key it is de-duplicated by."""
         # Remember the message *template* before it's filled in: "Reconnecting in %ss"
         # is one kind of alert, however many different numbers it's logged with.
         key = (record.name, record.msg if isinstance(record.msg, str) else repr(record.msg))
@@ -183,6 +197,7 @@ class _AlertQueueHandler(QueueHandler):
         return record
 
     def enqueue(self, record: logging.LogRecord) -> None:
+        """Queue the record without waiting. If the queue is full, the record is dropped."""
         try:
             self.queue.put_nowait(record)
         except queue.Full:

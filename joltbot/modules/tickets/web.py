@@ -4,16 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import RedirectResponse, Response
 from pydantic import ValidationError
 
-from ...core.discord_rest import DiscordError, GuildData
+from ...core.discord_rest import GuildData
 from ...core.guild_settings import StaleSettingsError, load_module, save_module
 from ...core.issues import list_issues
+from ...web.form_helpers import form_version, require_guild_data
 from ...web.rendering import render
 from ...web.routes.guild import guild_context
-from ...web.security import CsrfProtected, GuildAccess, RequireGuild, get_db, get_discord
+from ...web.security import CsrfProtected, GuildAccess, RequireGuild, get_db
+from ..general.settings import MODULE as GENERAL
+from .constants import ISSUE_PREFIX, MODULE
 from .forms import (
     choice_rows,
     emoji_errors,
@@ -31,13 +34,6 @@ from .settings import TicketSettings
 router = APIRouter(prefix="/servers/{guild_id}/tickets")
 
 
-async def _guild_data(request: Request, access: GuildAccess) -> GuildData:
-    try:
-        return await get_discord(request).guild_data(access.guild_id)
-    except DiscordError as e:
-        raise HTTPException(503, f"Couldn't load this server's roles and channels from Discord. {e}") from None
-
-
 async def _render_form(
     request: Request,
     access: GuildAccess,
@@ -50,15 +46,19 @@ async def _render_form(
     warnings: list[str],
     saved: bool = False,
     status_code: int = 200,
-):
+) -> Response:
+    """Render the Tickets page from the given values: the saved ones, or what was typed if a save failed.
+
+    The server's open ticket problems are shown above the form.
+    """
     async with get_db(request).session() as session:
-        issues = [i.message for i in await list_issues(session, access.guild_id) if i.key.startswith("tickets.")]
+        issues = [i.message for i in await list_issues(session, access.guild_id) if i.key.startswith(ISSUE_PREFIX)]
     questions, extras = padded_rows(values)
     return await render(
         request,
         "tickets/settings.html",
         {
-            **guild_context(access, "tickets"),
+            **guild_context(access, MODULE),
             **form_options(data),
             "values": values,
             "enabled": enabled,
@@ -77,12 +77,12 @@ async def _render_form(
 
 
 @router.get("")
-async def show(request: Request, access: RequireGuild, saved: bool = False):
+async def show(request: Request, access: RequireGuild, saved: bool = False) -> Response:
     """Render the tickets settings form for this guild.
 
     Args:
         request: FastAPI request.
-        access: Authenticated guild manager (``RequireGuild``).
+        access: Anyone who may use this server's dashboard (``RequireGuild``).
         saved: Query flag to show the success banner after a redirect.
 
     Returns:
@@ -91,9 +91,9 @@ async def show(request: Request, access: RequireGuild, saved: bool = False):
     Raises:
         HTTPException: 503 if Discord roles/channels cannot be loaded.
     """
-    data = await _guild_data(request, access)
+    data = await require_guild_data(request, access.guild_id, "roles and channels")
     async with get_db(request).session() as session:
-        state = await load_module(session, access.guild_id, "tickets")
+        state = await load_module(session, access.guild_id, MODULE)
     return await _render_form(
         request,
         access,
@@ -108,7 +108,7 @@ async def show(request: Request, access: RequireGuild, saved: bool = False):
 
 
 @router.post("", dependencies=[CsrfProtected])
-async def save(request: Request, access: RequireGuild):
+async def save(request: Request, access: RequireGuild) -> Response:
     """Validate and save ticket settings; guild id comes only from the URL.
 
     Rejects foreign role/channel IDs and refuses to enable until
@@ -116,7 +116,7 @@ async def save(request: Request, access: RequireGuild):
 
     Args:
         request: FastAPI request (form body + CSRF).
-        access: Authenticated guild manager.
+        access: Anyone who may use this server's dashboard (``RequireGuild``).
 
     Returns:
         Redirect to GET with ``?saved=1``, or the form with errors (400).
@@ -127,13 +127,11 @@ async def save(request: Request, access: RequireGuild):
     form = await request.form()
     values = parse_form(form)
     enabled = "enabled" in form
-    try:
-        version = int(form.get("version", "-1"))
-    except ValueError:
-        version = -1
-    data = await _guild_data(request, access)
+    version = form_version(form)
+    data = await require_guild_data(request, access.guild_id, "roles and channels")
 
-    async def fail(errors: list[str]):
+    async def fail(errors: list[str]) -> Response:
+        """Show the form again with what was typed and why it wasn't saved (HTTP 400)."""
         return await _render_form(
             request,
             access,
@@ -153,8 +151,8 @@ async def save(request: Request, access: RequireGuild):
     if errors := foreign_id_errors(settings, data) + emoji_errors(settings, data):
         return await fail(errors)
     async with get_db(request).session() as session:
-        previous = (await load_module(session, access.guild_id, "tickets")).config
-        dashboard_role_ids = (await load_module(session, access.guild_id, "general")).config.dashboard_role_ids
+        previous = (await load_module(session, access.guild_id, MODULE)).config
+        dashboard_role_ids = (await load_module(session, access.guild_id, GENERAL)).config.dashboard_role_ids
     if errors := powerful_role_errors(
         settings,
         previous,
@@ -172,7 +170,7 @@ async def save(request: Request, access: RequireGuild):
             await save_module(
                 session,
                 access.guild_id,
-                "tickets",
+                MODULE,
                 enabled=enabled,
                 config=settings,
                 expected_version=version,

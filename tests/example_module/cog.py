@@ -9,12 +9,15 @@ from joltbot.core.templating import render
 
 
 class Hello(commands.Cog):
+    """The /hello command."""
+
     def __init__(self, bot) -> None:
         self.bot = bot
 
     @app_commands.command(name="hello", description="Get a hello from JoltBot.")
     @app_commands.guild_only()
     async def hello(self, interaction: discord.Interaction) -> None:
+        """Reply privately with the server's greeting. Any member can use it, inside a server only."""
         # Read the settings fresh on every use, so dashboard changes apply at once.
         async with self.bot.db.session() as session:
             state = await load_module(session, interaction.guild_id, "hello")
@@ -26,4 +29,5 @@ class Hello(commands.Cog):
 
 
 async def setup(bot) -> None:
+    """discord.py calls this when the bot loads the module."""
     await bot.add_cog(Hello(bot))

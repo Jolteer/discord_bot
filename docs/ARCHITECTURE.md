@@ -97,7 +97,7 @@ has a worked example, which `tests/test_example_module.py` runs.
 
 ### Persistent components
 
-- Panel and ticket control views use fixed `custom_id`s and `timeout=None`.
+- Panel and ticket control views (`modules/tickets/views/`) use fixed `custom_id`s and `timeout=None`.
 - Registered in `cog_load` so buttons on old messages still work after restart.
 - Legacy `rokverify:` / `rokticket:` IDs remain registered for Gatekeeper panels.
 

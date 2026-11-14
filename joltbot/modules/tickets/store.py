@@ -19,8 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from ...core.db import Database
 from ...core.models import Ticket
 from ...core.types import utcnow
-
-ACTIVE = ("open", "closing")
+from .constants import ACTIVE_STATUSES, STATUS_CLOSED, STATUS_CLOSING, STATUS_OPEN
 
 
 async def reserve(
@@ -45,7 +44,7 @@ async def reserve(
                 user_id=user_id,
                 username=username[:100],
                 answers=answers,
-                status="open",
+                status=STATUS_OPEN,
                 created_at=utcnow(),
             )
             session.add(ticket)
@@ -71,7 +70,7 @@ async def set_channel(db: Database, ticket_id: int, channel_id: int) -> bool:
     """
     async with db.session() as session, session.begin():
         result = await session.execute(
-            update(Ticket).where(Ticket.id == ticket_id, Ticket.status == "open").values(channel_id=channel_id)
+            update(Ticket).where(Ticket.id == ticket_id, Ticket.status == STATUS_OPEN).values(channel_id=channel_id)
         )
         return result.rowcount == 1
 
@@ -84,7 +83,7 @@ async def delete_reservation(db: Database, ticket_id: int) -> None:
         ticket_id: Open ticket with no usable channel.
     """
     async with db.session() as session, session.begin():
-        await session.execute(delete(Ticket).where(Ticket.id == ticket_id, Ticket.status == "open"))
+        await session.execute(delete(Ticket).where(Ticket.id == ticket_id, Ticket.status == STATUS_OPEN))
 
 
 async def get(db: Database, ticket_id: int) -> Ticket | None:
@@ -128,7 +127,9 @@ async def get_active_by_user(db: Database, guild_id: int, user_id: int) -> Ticke
     """
     async with db.session() as session:
         result = await session.execute(
-            select(Ticket).where(Ticket.guild_id == guild_id, Ticket.user_id == user_id, Ticket.status.in_(ACTIVE))
+            select(Ticket).where(
+                Ticket.guild_id == guild_id, Ticket.user_id == user_id, Ticket.status.in_(ACTIVE_STATUSES)
+            )
         )
         return result.scalar_one_or_none()
 
@@ -145,7 +146,7 @@ async def list_active_user_ids(db: Database, guild_id: int) -> set[int]:
     """
     async with db.session() as session:
         result = await session.execute(
-            select(Ticket.user_id).where(Ticket.guild_id == guild_id, Ticket.status.in_(ACTIVE))
+            select(Ticket.user_id).where(Ticket.guild_id == guild_id, Ticket.status.in_(ACTIVE_STATUSES))
         )
         return set(result.scalars())
 
@@ -182,7 +183,7 @@ async def list_closed_needing_delete(db: Database, guild_id: int) -> list[Ticket
         result = await session.execute(
             select(Ticket).where(
                 Ticket.guild_id == guild_id,
-                Ticket.status == "closed",
+                Ticket.status == STATUS_CLOSED,
                 Ticket.logged.is_(True),
                 Ticket.channel_gone.is_(False),
                 Ticket.channel_id.is_not(None),
@@ -206,7 +207,7 @@ async def list_closed_unlogged(db: Database, guild_id: int) -> list[Ticket]:
             select(Ticket)
             .where(
                 Ticket.guild_id == guild_id,
-                Ticket.status == "closed",
+                Ticket.status == STATUS_CLOSED,
                 Ticket.logged.is_(False),
                 Ticket.channel_gone.is_(False),
                 Ticket.channel_id.is_not(None),
@@ -241,9 +242,9 @@ async def claim(
     async with db.session() as session, session.begin():
         result = await session.execute(
             update(Ticket)
-            .where(Ticket.id == ticket_id, Ticket.status == "open")
+            .where(Ticket.id == ticket_id, Ticket.status == STATUS_OPEN)
             .values(
-                status="closing",
+                status=STATUS_CLOSING,
                 outcome=outcome,
                 handled_by=handled_by,
                 reason=reason,
@@ -265,9 +266,9 @@ async def release(db: Database, ticket_id: int) -> None:
     async with db.session() as session, session.begin():
         await session.execute(
             update(Ticket)
-            .where(Ticket.id == ticket_id, Ticket.status == "closing")
+            .where(Ticket.id == ticket_id, Ticket.status == STATUS_CLOSING)
             .values(
-                status="open",
+                status=STATUS_OPEN,
                 outcome=None,
                 handled_by=None,
                 reason=None,
@@ -330,7 +331,7 @@ async def mark_closed(db: Database, ticket_id: int, *, logged: bool) -> None:
     async with db.session() as session, session.begin():
         ticket = await session.get(Ticket, ticket_id)
         if ticket is not None:
-            ticket.status = "closed"
+            ticket.status = STATUS_CLOSED
             ticket.closed_at = ticket.closed_at or utcnow()
             ticket.logged = logged
 
@@ -344,7 +345,7 @@ async def mark_logged(db: Database, ticket_id: int) -> None:
     """
     async with db.session() as session, session.begin():
         await session.execute(
-            update(Ticket).where(Ticket.id == ticket_id, Ticket.status == "closed").values(logged=True)
+            update(Ticket).where(Ticket.id == ticket_id, Ticket.status == STATUS_CLOSED).values(logged=True)
         )
 
 

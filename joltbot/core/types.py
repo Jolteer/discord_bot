@@ -15,6 +15,7 @@ from pydantic import BeforeValidator, PlainSerializer
 
 
 def _parse_snowflake(value: Any) -> int:
+    """Accept a Discord ID as an int or a string of digits; reject everything else."""
     if isinstance(value, bool):  # bool is a subclass of int; True is not an ID
         raise ValueError("must be a Discord ID")
     if isinstance(value, int):
@@ -29,7 +30,7 @@ def _parse_snowflake(value: Any) -> int:
 
 
 def _empty_to_none(value: Any) -> Any:
-    # An empty <select> in a form submits "", which means "nothing picked".
+    """Treat an empty form value as "nothing picked". An empty ``<select>`` submits ``""``."""
     return None if value in (None, "", 0, "0") else value
 
 

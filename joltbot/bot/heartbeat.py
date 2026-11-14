@@ -24,6 +24,7 @@ class Heartbeat(commands.Cog):
     """Tracks the gateway connection and records a heartbeat while it is up."""
 
     def __init__(self, bot: JoltBot) -> None:
+        """Start as "not connected"; the gateway events below flip the flag."""
         self.bot = bot
         self._connected = False
 
@@ -40,18 +41,25 @@ class Heartbeat(commands.Cog):
 
     @commands.Cog.listener()
     async def on_connect(self) -> None:
+        """A fresh gateway session was opened."""
         self._connected = True
 
     @commands.Cog.listener()
     async def on_resumed(self) -> None:
+        """A dropped gateway session was resumed."""
         self._connected = True
 
     @commands.Cog.listener()
     async def on_disconnect(self) -> None:
+        """The gateway connection dropped, or an attempt to connect failed."""
         self._connected = False
 
     @tasks.loop(seconds=HEARTBEAT_INTERVAL_SECONDS)
     async def beat(self) -> None:
+        """Write the heartbeat, but only while the gateway connection is really up.
+
+        Runs every ``HEARTBEAT_INTERVAL_SECONDS``. A failed write is only a warning.
+        """
         if not self._connected or not self.bot.is_ready() or self.bot.is_closed():
             return
         try:
@@ -64,6 +72,7 @@ class Heartbeat(commands.Cog):
 
     @beat.before_loop
     async def _before_beat(self) -> None:
+        """Hold the first beat until the bot is connected and ready."""
         await self.bot.wait_until_ready()
 
 

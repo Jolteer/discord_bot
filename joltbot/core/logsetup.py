@@ -14,6 +14,9 @@ from pathlib import Path
 from .alerts import install_alerts
 
 CALLBACK_PATH = "/auth/callback"
+# Each process keeps its current log file plus this many older ones, 2 MB each.
+LOG_FILE_MAX_BYTES = 2_000_000
+LOG_FILE_BACKUPS = 5
 
 # Attributes every LogRecord has. Anything else on a record came from `extra=`.
 # color_message is uvicorn's copy of the message with terminal colour codes; never useful here.
@@ -24,6 +27,7 @@ class HideLoginCode(logging.Filter):
     """uvicorn logs every URL. Hide the one-time ?code=&state= of the Discord login."""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Blank out the query string of the login callback URL. The record is still logged."""
         args = record.args
         # uvicorn.access args: (client, method, path, http_version, status)
         if (
@@ -46,6 +50,7 @@ class JsonFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
+        """Render one record as a single line of JSON."""
         data: dict[str, object] = {
             "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(timespec="milliseconds"),
             "level": record.levelname,
@@ -88,7 +93,10 @@ def setup_logging(
     if log_dir:
         Path(log_dir).mkdir(parents=True, exist_ok=True)
         file = RotatingFileHandler(
-            Path(log_dir) / f"{process_name}.log", maxBytes=2_000_000, backupCount=5, encoding="utf-8"
+            Path(log_dir) / f"{process_name}.log",
+            maxBytes=LOG_FILE_MAX_BYTES,
+            backupCount=LOG_FILE_BACKUPS,
+            encoding="utf-8",
         )
         file.setFormatter(fmt)
         handlers.append(file)

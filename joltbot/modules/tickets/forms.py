@@ -14,13 +14,26 @@ from pydantic import ValidationError
 
 from ...core.discord_rest import GuildData
 from ...core.permissions import ADMINISTRATOR, BOT_PERMISSIONS, elevated_permission_names
-from .settings import PLACEHOLDERS, TicketMessages, TicketSettings, custom_emoji_id, custom_emoji_name
+from ...web.options import role_option, text_channel_options
+from .settings import (
+    DEFAULT_ANSWER_LENGTH,
+    DEFAULT_DELETE_DELAY_SECONDS,
+    MAX_CHOICE_OPTIONS,
+    MAX_CHOICE_QUESTIONS,
+    MAX_EXTRA_ROLE_CHOICES,
+    MAX_FORM_QUESTIONS,
+    PLACEHOLDERS,
+    TicketMessages,
+    TicketSettings,
+    custom_emoji_id,
+    custom_emoji_name,
+)
 
-MAX_QUESTIONS = 5
 BLANK_EXTRA_ROWS = 3  # empty rows shown so admins can add extra role choices
-MAX_CHOICE_QUESTIONS = 4  # same limits as ChoiceQuestion / TicketSettings.choice_questions
-MAX_CHOICE_OPTIONS = 10
 BLANK_OPTION_ROWS = 3  # empty option rows shown under each dropdown question
+# Extra-role rows are numbered from 0 and read until one is missing. This stops a crafted
+# form from making that loop long; it is well above the number the page ever shows.
+MAX_EXTRA_ROWS_READ = 40
 
 FIELD_LABELS = {
     "staff_role_ids": "Staff roles",
@@ -58,12 +71,76 @@ SINGLE_LINE_MESSAGES = {"panel_title", "panel_button_label", "form_title", "deny
 
 
 def _text(form: Mapping[str, Any], name: str) -> str:
+    """One form field as text, with line endings normalised and the ends trimmed.
+
+    A missing field, or a file where text was expected, gives ``""``.
+    """
     value = form.get(name)
     return value.replace("\r\n", "\n").strip() if isinstance(value, str) else ""
 
 
 def _ids(form: Any, name: str) -> list[str]:
+    """Every non-empty value of a field sent more than once (a tick list sends one per ticked box)."""
     return [v for v in form.getlist(name) if isinstance(v, str) and v.strip()]
+
+
+def _parse_questions(form: Any) -> list[dict[str, Any]]:
+    """The typed questions: fields ``q_label_<n>``, ``q_placeholder_<n>``, ``q_required_<n>``,
+    ``q_long_<n>`` and ``q_max_<n>``. A row with no label is skipped (that is how one is removed)."""
+    questions = []
+    for i in range(MAX_FORM_QUESTIONS):
+        label = _text(form, f"q_label_{i}")
+        if label:
+            questions.append(
+                {
+                    "label": label,
+                    "placeholder": _text(form, f"q_placeholder_{i}"),
+                    "required": f"q_required_{i}" in form,
+                    "long": f"q_long_{i}" in form,
+                    "max_length": _text(form, f"q_max_{i}") or str(DEFAULT_ANSWER_LENGTH),
+                }
+            )
+    return questions
+
+
+def _parse_choices(form: Any) -> list[dict[str, Any]]:
+    """The dropdown questions: ``c_label_<question>``, ``c_required_<question>``, and per option
+    ``c_opt_label_<question>_<option>``, ``c_opt_role_...`` and ``c_opt_emoji_...``.
+
+    A question whose name was cleared is dropped, options and all (that is how one is removed).
+    """
+    choices = []
+    for q in range(MAX_CHOICE_QUESTIONS):
+        label = _text(form, f"c_label_{q}")
+        if not label:
+            continue
+        options = []
+        for o in range(MAX_CHOICE_OPTIONS):
+            option_label, role_id = _text(form, f"c_opt_label_{q}_{o}"), _text(form, f"c_opt_role_{q}_{o}")
+            emoji = _text(form, f"c_opt_emoji_{q}_{o}")
+            if option_label or role_id or emoji:
+                options.append({"label": option_label, "role_id": role_id or None, "emoji": emoji or None})
+        choices.append({"label": label, "required": f"c_required_{q}" in form, "options": options})
+    return choices
+
+
+def _parse_extras(form: Any) -> list[dict[str, Any]]:
+    """The extra role choices: ``extra_label_<n>``, ``extra_role_<n>`` and ``extra_emoji_<n>``.
+
+    A row with neither a label nor a role is skipped.
+    """
+    extras = []
+    i = 0
+    while f"extra_label_{i}" in form and i < MAX_EXTRA_ROWS_READ:
+        label, role_id, emoji = (
+            _text(form, f"extra_label_{i}"),
+            _text(form, f"extra_role_{i}"),
+            _text(form, f"extra_emoji_{i}"),
+        )
+        if label or role_id:
+            extras.append({"label": label, "role_id": role_id, "emoji": emoji or None})
+        i += 1
+    return extras
 
 
 def parse_form(form: Any) -> dict[str, Any]:
@@ -78,45 +155,6 @@ def parse_form(form: Any) -> dict[str, Any]:
     Returns:
         Unvalidated settings dict ready for ``TicketSettings.model_validate``.
     """
-    questions = []
-    for i in range(MAX_QUESTIONS):
-        label = _text(form, f"q_label_{i}")
-        if label:
-            questions.append(
-                {
-                    "label": label,
-                    "placeholder": _text(form, f"q_placeholder_{i}"),
-                    "required": f"q_required_{i}" in form,
-                    "long": f"q_long_{i}" in form,
-                    "max_length": _text(form, f"q_max_{i}") or "200",
-                }
-            )
-    # Dropdown questions: c_label_<question>, c_required_<question>, and per option
-    # c_opt_label_<question>_<option> + c_opt_role_<question>_<option>. A question whose
-    # name was cleared is dropped, options and all (that is how one is removed).
-    choices = []
-    for q in range(MAX_CHOICE_QUESTIONS):
-        label = _text(form, f"c_label_{q}")
-        if not label:
-            continue
-        options = []
-        for o in range(MAX_CHOICE_OPTIONS):
-            option_label, role_id = _text(form, f"c_opt_label_{q}_{o}"), _text(form, f"c_opt_role_{q}_{o}")
-            emoji = _text(form, f"c_opt_emoji_{q}_{o}")
-            if option_label or role_id or emoji:
-                options.append({"label": option_label, "role_id": role_id or None, "emoji": emoji or None})
-        choices.append({"label": label, "required": f"c_required_{q}" in form, "options": options})
-    extras = []
-    i = 0
-    while f"extra_label_{i}" in form and i < 40:
-        label, role_id, emoji = (
-            _text(form, f"extra_label_{i}"),
-            _text(form, f"extra_role_{i}"),
-            _text(form, f"extra_emoji_{i}"),
-        )
-        if label or role_id:
-            extras.append({"label": label, "role_id": role_id, "emoji": emoji or None})
-        i += 1
     return {
         "staff_role_ids": _ids(form, "staff_role_ids"),
         "allow_administrators": "allow_administrators" in form,
@@ -126,13 +164,13 @@ def parse_form(form: Any) -> dict[str, Any]:
         "welcome_channel_id": _text(form, "welcome_channel_id") or None,
         "pending_role_id": _text(form, "pending_role_id") or None,
         "accept_role_ids": _ids(form, "accept_role_ids"),
-        "extra_role_choices": extras,
+        "extra_role_choices": _parse_extras(form),
         "ping_enabled": "ping_enabled" in form,
         "ping_role_ids": _ids(form, "ping_role_ids"),
-        "form_questions": questions,
-        "choice_questions": choices,
+        "form_questions": _parse_questions(form),
+        "choice_questions": _parse_choices(form),
         "require_attachment": "require_attachment" in form,
-        "delete_delay_seconds": _text(form, "delete_delay_seconds") or "10",
+        "delete_delay_seconds": _text(form, "delete_delay_seconds") or str(DEFAULT_DELETE_DELAY_SECONDS),
         "reupload_attachments": "reupload_attachments" in form,
         "assign_pending_on_startup": "assign_pending_on_startup" in form,
         # Messages are not stripped of inner newlines; only the ends are trimmed.
@@ -369,27 +407,24 @@ def setup_warnings(settings: TicketSettings, data: GuildData) -> list[str]:
 def form_options(data: GuildData) -> dict[str, Any]:
     """Roles and channels in the shape the template needs (IDs as strings)."""
     top = data.bot_top_position()
-    categories = {c.id: c.name for c in data.categories()}
     return {
-        "roles": [
-            {
-                "id": str(r.id),
-                "name": r.name,
-                "color": f"#{r.color:06x}" if r.color else None,
-                "assignable": not r.managed and r.position < top,
-                "managed": r.managed,
-            }
-            for r in data.roles
-        ],
-        "text_channels": [
-            {"id": str(c.id), "name": c.name, "category": categories.get(c.parent_id or 0, "")}
-            for c in data.text_channels()
-        ],
+        # "assignable": JoltBot can only give a role that sits below its own highest one.
+        "roles": [{**role_option(r), "assignable": not r.managed and r.position < top} for r in data.roles],
+        "text_channels": text_channel_options(data),
         "categories": [{"id": str(c.id), "name": c.name} for c in data.categories()],
     }
 
 
 def message_fields(values: dict[str, Any]) -> list[dict[str, Any]]:
+    """The message boxes for the template, one row per ``TicketMessages`` field.
+
+    Args:
+        values: The current message texts, by field name.
+
+    Returns:
+        One row per message: its label, help text, the placeholders it
+        understands, whether it is multi-line, and its length limit.
+    """
     limits = {key: field.metadata for key, field in TicketMessages.model_fields.items()}
     out = []
     for key in TicketMessages.model_fields:
@@ -412,12 +447,17 @@ def message_fields(values: dict[str, Any]) -> list[dict[str, Any]]:
 def padded_rows(values: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Question rows padded to 5, and extra-role rows plus a few blank ones to fill in."""
     questions = list(values.get("form_questions") or [])
-    questions += [{"label": "", "placeholder": "", "required": True, "long": False, "max_length": 200}] * (
-        MAX_QUESTIONS - len(questions)
-    )
+    blank_question = {
+        "label": "",
+        "placeholder": "",
+        "required": True,
+        "long": False,
+        "max_length": DEFAULT_ANSWER_LENGTH,
+    }
+    questions += [blank_question] * (MAX_FORM_QUESTIONS - len(questions))
     extras = list(values.get("extra_role_choices") or [])
-    extras += [{"label": "", "role_id": "", "emoji": ""}] * min(BLANK_EXTRA_ROWS, 24 - len(extras))
-    return questions[:MAX_QUESTIONS], extras
+    extras += [{"label": "", "role_id": "", "emoji": ""}] * min(BLANK_EXTRA_ROWS, MAX_EXTRA_ROLE_CHOICES - len(extras))
+    return questions[:MAX_FORM_QUESTIONS], extras
 
 
 def _emoji_preview_url(emoji: str | None, data: GuildData) -> str | None:

@@ -28,6 +28,9 @@ GUILD_LIST_MAX_AGE = timedelta(minutes=5)
 # If Discord can't be asked (an outage), the cached list is still used up to this age.
 # After that, server pages answer "Discord isn't responding" until it can be refreshed.
 GUILD_LIST_OUTAGE_LIMIT = timedelta(minutes=30)
+# A real cookie token is 43 characters. Anything much longer isn't ours, so it is
+# refused before it is hashed or looked up.
+MAX_TOKEN_LENGTH = 200
 
 
 def hash_token(secret: str, raw_token: str) -> str:
@@ -95,7 +98,7 @@ async def load_session(db: Database, secret: str, raw_token: str | None) -> WebS
     Returns:
         Session row, or ``None`` if missing/expired/invalid.
     """
-    if not raw_token or len(raw_token) > 200:
+    if not raw_token or len(raw_token) > MAX_TOKEN_LENGTH:
         return None
     async with db.session() as session:
         row = await session.get(WebSession, hash_token(secret, raw_token))

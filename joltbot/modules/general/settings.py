@@ -5,6 +5,8 @@ from pydantic import Field
 from ...core.types import OptionalSnowflake, Snowflake
 from ..base import ModuleSettingsModel
 
+# This module's key in the registry and in module_settings. Stored in the database: never change it.
+MODULE = "general"
 DEFAULT_EMBED_COLOR = "#FFB800"  # JoltBot yellow
 MAX_DASHBOARD_ROLES = 25
 
@@ -20,7 +22,6 @@ class GeneralSettings(ModuleSettingsModel):
             without having Manage Server.
     """
 
-    # Colour used for JoltBot's embeds in this server, as #RRGGBB.
     embed_color: str = Field(DEFAULT_EMBED_COLOR, pattern=r"^#[0-9A-Fa-f]{6}$")
     # Where JoltBot tells admins about problems in Discord itself. None = dashboard only.
     notice_channel_id: OptionalSnowflake = None

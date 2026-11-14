@@ -37,7 +37,7 @@ from joltbot.core.config import get_config
 from joltbot.core.db import Database
 from joltbot.core.guild_settings import Actor, load_module, save_module
 from joltbot.core.guilds import GuildInfo, ensure_guild
-from joltbot.core.models import AuditLog, BotMeta, PanelMessage, Ticket
+from joltbot.core.models import CLEAR_GUILD_COMMANDS_KEY, AuditLog, BotMeta, PanelMessage, Ticket
 from joltbot.core.schema import schema_problem
 from joltbot.modules.general.settings import GeneralSettings
 from joltbot.modules.tickets.settings import ExtraRoleChoice, FormQuestion, TicketMessages, TicketSettings
@@ -106,11 +106,15 @@ PLACEHOLDER_RENAMES = {"{guild}": "{server}", "{alliance_line}": "{role_line}", 
 
 
 class MigrationError(Exception):
+    """The migration can't go ahead. The message says why, in plain words."""
+
     pass
 
 
 @dataclass
 class Summary:
+    """What a run did (or, on a dry run, would have done), for printing."""
+
     guild_id: int = 0
     tickets_copied: int = 0
     tickets_skipped: int = 0
@@ -119,6 +123,7 @@ class Summary:
     notes: list[str] = field(default_factory=list)
 
     def render(self) -> str:
+        """The summary as aligned lines of text."""
         lines = [
             f"Guild:            {self.guild_id}",
             f"Tickets copied:   {self.tickets_copied} ({self.open_tickets} still open/closing)",
@@ -129,12 +134,14 @@ class Summary:
 
 
 def _id(value: Any) -> int | None:
+    """A Discord ID from the old config, or ``None`` for an empty or zero value."""
     if value in (None, "", 0, "0"):
         return None
     return int(str(value).strip())
 
 
 def _rename_placeholders(text: str) -> str:
+    """Rewrite the old bot's placeholder names as JoltBot's (``{guild}`` becomes ``{server}``, ...)."""
     for old, new in PLACEHOLDER_RENAMES.items():
         text = text.replace(old, new)
     return text
@@ -182,6 +189,7 @@ def build_settings(raw: dict[str, Any]) -> TicketSettings:
 
 
 def _parse_time(value: str | None) -> datetime | None:
+    """Read a timestamp from the old database. One without a timezone was stored as UTC."""
     if not value:
         return None
     parsed = datetime.fromisoformat(value)
@@ -214,6 +222,15 @@ def backup_old_db(path: Path) -> Path:
 
 
 def convert_ticket(row: dict[str, Any], guild_id: int) -> Ticket:
+    """Turn one row of the old tickets table into a JoltBot ``Ticket``.
+
+    Args:
+        row: The old row, as a dict.
+        guild_id: The server every old ticket belongs to (the old bot served one).
+
+    Returns:
+        An unsaved ``Ticket`` with the same number, answers and outcome.
+    """
     answers = [{"label": label, "value": row.get(col) or ""} for col, label in OLD_ANSWER_COLUMNS if row.get(col)]
     return Ticket(
         id=row["id"],
@@ -246,6 +263,23 @@ async def migrate(
     dry_run: bool = False,
     force: bool = False,
 ) -> Summary:
+    """Copy the old bot's settings and tickets into the JoltBot database, in one transaction.
+
+    Args:
+        db: The JoltBot database, already at the current schema.
+        config_path: The old bot's ``config.json``.
+        old_db_path: The old bot's ``tickets.db``, or ``None`` to bring over settings only.
+        guild_name: Name stored for the server until the bot refreshes it.
+        dry_run: True does everything, then rolls it all back.
+        force: True runs again on a server that was already migrated.
+
+    Returns:
+        What was copied and skipped.
+
+    Raises:
+        MigrationError: The config is incomplete, the old database is missing, or
+            the server was already migrated and ``force`` is False.
+    """
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     guild_id = _id(raw.get("guild_id"))
     if guild_id is None:
@@ -334,10 +368,10 @@ async def migrate(
                 summary.panel = f"channel {channel_id}, message {message_id}"
 
             # Ask the bot to remove the old per-server slash commands (/setup-verify etc.).
-            meta = await session.get(BotMeta, "clear_guild_commands")
+            meta = await session.get(BotMeta, CLEAR_GUILD_COMMANDS_KEY)
             ids = set(filter(None, meta.value.split(","))) if meta else set()
             ids.add(str(guild_id))
-            await session.merge(BotMeta(key="clear_guild_commands", value=",".join(sorted(ids))))
+            await session.merge(BotMeta(key=CLEAR_GUILD_COMMANDS_KEY, value=",".join(sorted(ids))))
 
             if dry_run:
                 summary.notes.append("Dry run: nothing was saved.")
@@ -354,6 +388,11 @@ class _DryRun(Exception):
 
 
 async def _main(args: argparse.Namespace) -> int:
+    """Check the schema, back up the old database, migrate, and print the summary.
+
+    Returns:
+        The process exit code: 0 on success, 1 if nothing was migrated.
+    """
     config = get_config()
     db = Database(config.database_url)
     try:
@@ -378,6 +417,7 @@ async def _main(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    """CLI entry: parse the arguments and run the migration."""
     parser = argparse.ArgumentParser(description="Seed JoltBot with the King of Chaos server's old settings.")
     parser.add_argument("--config", required=True, help="path to the old bot's config.json")
     parser.add_argument("--old-db", help="path to the old bot's data/tickets.db (optional)")

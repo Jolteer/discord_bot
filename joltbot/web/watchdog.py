@@ -40,6 +40,7 @@ class BotWatchdog:
     """
 
     def __init__(self, db: Database, *, clock: Callable[[], datetime] = utcnow) -> None:
+        """Start the clock: the bot has ``OFFLINE_AFTER`` from now to report in before any alarm."""
         self._db = db
         self._clock = clock
         self._started = clock()

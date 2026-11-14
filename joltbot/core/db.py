@@ -43,6 +43,11 @@ class Database:
     """
 
     def __init__(self, url: str) -> None:
+        """Create the engine and the session factory.
+
+        For SQLite this also creates the database's folder if it is missing, and
+        arranges for the pragmas above to run on every new connection.
+        """
         parsed = make_url(url)
         if parsed.get_backend_name() == "sqlite" and parsed.database not in (None, "", ":memory:"):
             Path(parsed.database).parent.mkdir(parents=True, exist_ok=True)

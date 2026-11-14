@@ -11,6 +11,7 @@ from ...core.models import Ticket
 
 
 def _human_size(n: float) -> str:
+    """A file size for people to read: ``512 B``, ``1.5 KB``, ``3.2 MB``."""
     for unit in ("B", "KB", "MB"):
         if n < 1024:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"

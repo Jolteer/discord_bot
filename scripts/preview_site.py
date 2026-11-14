@@ -26,7 +26,15 @@ import uvicorn
 
 from joltbot.core.config import AppConfig
 from joltbot.core.db import Database
-from joltbot.core.discord_rest import CATEGORY, TEXT_CHANNEL, Channel, DiscordError, GuildData, Role
+from joltbot.core.discord_rest import (
+    CATEGORY,
+    DEFAULT_TOKEN_LIFETIME_SECONDS,
+    TEXT_CHANNEL,
+    Channel,
+    DiscordError,
+    GuildData,
+    Role,
+)
 from joltbot.core.guild_settings import Actor, load_module, save_module
 from joltbot.core.guilds import GuildInfo, ensure_guild
 from joltbot.core.health import write_heartbeat
@@ -50,6 +58,7 @@ PANEL, LOG, STAFF_CHAT, WELCOME, TICKETS = 6001, 6002, 6003, 6004, 7001
 
 
 def example_guild(guild_id: int) -> GuildData:
+    """The example server's roles and channels. The same for every guild ID."""
     return GuildData(
         guild_id=guild_id,
         roles=[
@@ -78,29 +87,41 @@ class PreviewDiscord:
     """Answers the dashboard's Discord questions from the example data above."""
 
     def authorize_url(self, state: str) -> str:
-        return f"/auth/callback?code=preview&state={state}"  # straight back: no Discord login
+        """Skip Discord: the login link leads straight back to the callback."""
+        return f"/auth/callback?code=preview&state={state}"
 
     async def exchange_code(self, code: str) -> dict[str, Any]:
+        """Accept the stand-in login code."""
         if code != "preview":
             raise DiscordError("bad code", 400)
-        return {"access_token": "preview-token", "expires_in": 604800, "scope": "identify guilds"}
+        return {
+            "access_token": "preview-token",
+            "expires_in": DEFAULT_TOKEN_LIFETIME_SECONDS,
+            "scope": "identify guilds",
+        }
 
     async def get_user(self, access_token: str) -> dict[str, Any]:
+        """The example admin."""
         return USER
 
     async def get_user_guilds(self, access_token: str) -> list[dict[str, Any]]:
+        """The three example servers."""
         return GUILDS
 
     async def guild_data(self, guild_id: int, *, refresh: bool = False) -> GuildData:
+        """The example roles and channels."""
         return example_guild(guild_id)
 
     def forget_guild(self, guild_id: int) -> None:
+        """Nothing is cached, so there is nothing to forget."""
         pass
 
     async def member_role_ids(self, guild_id: int, user_id: int) -> frozenset[int]:
+        """No roles: the example user manages every server, so access roles never come into it."""
         return frozenset()
 
     async def aclose(self) -> None:
+        """Nothing to close."""
         pass
 
 
@@ -170,6 +191,7 @@ async def seed(db: Database, *, bot_down: bool) -> None:
 
 
 async def keep_bot_connected(db: Database) -> None:
+    """Write a heartbeat every 30 seconds, so the dashboard shows the bot as connected."""
     while True:
         await asyncio.sleep(30)
         async with db.session() as session, session.begin():
@@ -177,6 +199,12 @@ async def keep_bot_connected(db: Database) -> None:
 
 
 async def run(port: int, bot_down: bool) -> None:
+    """Create the throwaway database, fill it, and serve the dashboard until Ctrl+C.
+
+    Args:
+        port: Port to listen on, on this computer only.
+        bot_down: True leaves the heartbeat out, to preview the "bot is offline" notice.
+    """
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
         database_url = f"sqlite+aiosqlite:///{(Path(folder) / 'preview.db').as_posix()}"
         db = Database(database_url)
@@ -202,6 +230,7 @@ async def run(port: int, bot_down: bool) -> None:
 
 
 def main() -> None:
+    """CLI entry: parse the arguments and start the preview."""
     parser = argparse.ArgumentParser(description="Preview the JoltBot website with example data (no Discord needed)")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--bot-down", action="store_true", help="show the dashboard as it looks when the bot is down")

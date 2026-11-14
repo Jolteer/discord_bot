@@ -8,10 +8,11 @@ The dashboard access page takes ``RequireManager`` instead: Manage Server only.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from pydantic import ValidationError
 from sqlalchemy import delete, select
 
@@ -21,19 +22,25 @@ from ...core.health import bot_status
 from ...core.issues import list_issues
 from ...core.models import AuditLog, GuildIssue
 from ...modules.general.settings import MAX_DASHBOARD_ROLES, GeneralSettings
+from ...modules.general.settings import MODULE as GENERAL
 from ...modules.registry import MODULES
+from ..form_helpers import STALE_SETTINGS, form_version, require_guild_data
+from ..options import role_option
 from ..rendering import render
 from ..security import CsrfProtected, GuildAccess, RequireGuild, RequireManager, get_db, get_discord
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/servers/{guild_id}")
 AUDIT_PAGE_SIZE = 50
+AUDIT_VALUE_MAX = 120  # characters of one old or new value shown in the audit log
 
 
 def guild_context(access: GuildAccess, active: str) -> dict[str, Any]:
     """Build template context shared by every per-server page.
 
     Args:
-        access: Proven guild manager access.
+        access: Proven access to this server's dashboard.
         active: Sidebar highlight key (e.g. ``"overview"``, ``"tickets"``).
 
     Returns:
@@ -53,12 +60,12 @@ def guild_context(access: GuildAccess, active: str) -> dict[str, Any]:
 
 
 @router.get("")
-async def overview(request: Request, access: RequireGuild):
+async def overview(request: Request, access: RequireGuild) -> Response:
     """Guild overview: module status, setup problems, and open issues.
 
     Args:
         request: Incoming HTTP request.
-        access: Authenticated guild manager.
+        access: Anyone who may use this server's dashboard (``RequireGuild``).
 
     Returns:
         HTML for ``guild/overview.html``.
@@ -105,11 +112,21 @@ def _short(value: Any, names: dict[str, str]) -> str:
     text = str(value)
     if text in names:
         return names[text]
-    return text if len(text) <= 120 else text[:117] + "…"
+    return text if len(text) <= AUDIT_VALUE_MAX else text[: AUDIT_VALUE_MAX - 3] + "…"
 
 
 @router.get("/audit")
-async def audit(request: Request, access: RequireGuild, before: int | None = None):
+async def audit(request: Request, access: RequireGuild, before: int | None = None) -> Response:
+    """The audit log: who changed which setting, newest first, 50 entries at a time.
+
+    Args:
+        request: Incoming HTTP request.
+        access: Anyone who may use this server's dashboard (``RequireGuild``).
+        before: Show only entries older than this entry ID (the "Load more" link).
+
+    Returns:
+        The whole page, or only the extra rows when htmx asks for more.
+    """
     query = select(AuditLog).where(AuditLog.guild_id == access.guild_id)  # this server only
     if before is not None:
         query = query.where(AuditLog.id < before)
@@ -123,8 +140,9 @@ async def audit(request: Request, access: RequireGuild, before: int | None = Non
     try:
         data = await get_discord(request).guild_data(access.guild_id)
         names = {str(r.id): f"@{r.name}" for r in data.roles} | {str(c.id): f"#{c.name}" for c in data.channels}
-    except DiscordError:
-        pass  # show raw IDs instead
+    except DiscordError as e:
+        # The page still works: it shows raw IDs where it would have shown names.
+        log.debug("Guild %s: no role and channel names for the audit log: %s", access.guild_id, e)
 
     entries = [
         {
@@ -155,8 +173,19 @@ async def audit(request: Request, access: RequireGuild, before: int | None = Non
 
 
 @router.post("/refresh", dependencies=[CsrfProtected])
-async def refresh(request: Request, access: RequireGuild, next: str = Form("")):
-    """Forget the cached roles/channels so newly created ones show up."""
+async def refresh(request: Request, access: RequireGuild, next: str = Form("")) -> Response:
+    """Forget the cached roles and channels, so newly created ones show up.
+
+    Open to anyone who may use this server's dashboard.
+
+    Args:
+        request: Incoming HTTP request (form body + CSRF).
+        access: Anyone who may use this server's dashboard (``RequireGuild``).
+        next: The page to go back to. Only a path inside this server's dashboard is followed.
+
+    Returns:
+        Redirect back to ``next``, or to the overview.
+    """
     get_discord(request).forget_guild(access.guild_id)
     prefix = f"/servers/{access.guild_id}"
     # Only redirect within this server's pages (never to an outside URL).
@@ -165,7 +194,23 @@ async def refresh(request: Request, access: RequireGuild, next: str = Form("")):
 
 
 @router.post("/issues/{issue_id}/dismiss", dependencies=[CsrfProtected])
-async def dismiss_issue(request: Request, access: RequireGuild, issue_id: int):
+async def dismiss_issue(request: Request, access: RequireGuild, issue_id: int) -> Response:
+    """Dismiss one warning on the overview.
+
+    Open to anyone who may use this server's dashboard. A problem that happens
+    again comes back as a new warning, and is posted to the notices channel again.
+
+    Args:
+        request: Incoming HTTP request (form body + CSRF).
+        access: Anyone who may use this server's dashboard (``RequireGuild``).
+        issue_id: The warning to remove.
+
+    Returns:
+        Redirect to the overview.
+
+    Raises:
+        HTTPException: 404 if this server has no such warning.
+    """
     async with get_db(request).session() as session, session.begin():
         # The guild_id condition stops someone dismissing another server's issue by changing issue_id.
         result = await session.execute(
@@ -177,13 +222,6 @@ async def dismiss_issue(request: Request, access: RequireGuild, issue_id: int):
 
 
 # --------------------------------------------------------------------------- dashboard access
-
-
-async def _access_guild_data(request: Request, access: GuildAccess) -> GuildData:
-    try:
-        return await get_discord(request).guild_data(access.guild_id)
-    except DiscordError as e:
-        raise HTTPException(503, f"Couldn't load this server's roles from Discord. {e}") from None
 
 
 def _handed_out_roles(states: dict[str, ModuleState[Any]]) -> dict[int, str]:
@@ -215,16 +253,14 @@ async def _render_access(
     errors: list[str],
     saved: bool = False,
     status_code: int = 200,
-):
+) -> Response:
+    """Render the Dashboard access page with the given roles ticked."""
     return await render(
         request,
         "guild/access.html",
         {
             **guild_context(access, "access"),
-            "roles": [
-                {"id": str(r.id), "name": r.name, "color": f"#{r.color:06x}" if r.color else None, "managed": r.managed}
-                for r in data.roles
-            ],
+            "roles": [role_option(r) for r in data.roles],
             "selected": selected,
             "version": version,
             "errors": errors,
@@ -235,7 +271,7 @@ async def _render_access(
 
 
 @router.get("/access")
-async def show_access(request: Request, access: RequireManager, saved: bool = False):
+async def show_access(request: Request, access: RequireManager, saved: bool = False) -> Response:
     """Show which roles may use this server's dashboard. Managers only.
 
     Args:
@@ -249,9 +285,9 @@ async def show_access(request: Request, access: RequireManager, saved: bool = Fa
     Raises:
         HTTPException: 503 if Discord's role list cannot be loaded.
     """
-    data = await _access_guild_data(request, access)
+    data = await require_guild_data(request, access.guild_id, "roles")
     async with get_db(request).session() as session:
-        state = (await load_all(session, access.guild_id))["general"]
+        state = (await load_all(session, access.guild_id))[GENERAL]
     return await _render_access(
         request,
         access,
@@ -263,8 +299,38 @@ async def show_access(request: Request, access: RequireManager, saved: bool = Fa
     )
 
 
+def _access_role_errors(
+    new: GeneralSettings, current: GeneralSettings, data: GuildData, states: dict[str, ModuleState[Any]]
+) -> list[str]:
+    """Why the picked dashboard access roles can't be saved.
+
+    Args:
+        new: General settings with the picked roles.
+        current: General settings as saved now.
+        data: Live roles for this server.
+        states: All of this server's module settings, to see which roles JoltBot hands out.
+
+    Returns:
+        Error lines for the form; empty if the roles may be saved. A role
+        JoltBot gives to members can't be newly added, because everyone who got
+        it that way would be let in.
+    """
+    # Role IDs must belong to THIS server, or a pasted ID could name a role elsewhere.
+    if any(role_id not in data.role_ids for role_id in new.dashboard_role_ids):
+        return ["A selected role isn't in this server. Refresh the page and pick again."]
+
+    names = {r.id: r.name for r in data.roles}
+    handed_out = _handed_out_roles(states)
+    return [
+        f"JoltBot gives out {names[role_id]} ({handed_out[role_id]}), so everyone who gets it that way "
+        "would be able to use this dashboard. Pick a role that only the people you trust have."
+        for role_id in new.dashboard_role_ids
+        if role_id in handed_out and role_id not in current.dashboard_role_ids
+    ]
+
+
 @router.post("/access", dependencies=[CsrfProtected])
-async def save_access(request: Request, access: RequireManager):
+async def save_access(request: Request, access: RequireManager) -> Response:
     """Save which roles may use this server's dashboard. Managers only.
 
     The change is written to the audit log by ``save_module``, in the same
@@ -282,13 +348,12 @@ async def save_access(request: Request, access: RequireManager):
     """
     form = await request.form()
     picked = list(dict.fromkeys(str(v).strip() for v in form.getlist("dashboard_role_ids")))
-    try:
-        version = int(form.get("version", "-1"))
-    except ValueError:
-        version = -1
-    data = await _access_guild_data(request, access)  # before the transaction: never hold one across a Discord call
+    version = form_version(form)
+    # Before the transaction: never hold one across a Discord call.
+    data = await require_guild_data(request, access.guild_id, "roles")
 
-    async def fail(errors: list[str]):
+    async def fail(errors: list[str]) -> Response:
+        """Show the page again with what was ticked and why it wasn't saved (HTTP 400)."""
         return await _render_access(
             request, access, data, selected=picked, version=version, errors=errors, status_code=400
         )
@@ -296,35 +361,23 @@ async def save_access(request: Request, access: RequireManager):
     try:
         async with get_db(request).session() as session, session.begin():
             states = await load_all(session, access.guild_id)
-            current: GeneralSettings = states["general"].config
+            current: GeneralSettings = states[GENERAL].config
             try:
                 new = GeneralSettings.model_validate({**current.model_dump(mode="json"), "dashboard_role_ids": picked})
             except ValidationError:
                 return await fail([f"Pick roles from the list, at most {MAX_DASHBOARD_ROLES}."])
-            # Role IDs must belong to THIS server, or a pasted ID could name a role elsewhere.
-            if any(role_id not in data.role_ids for role_id in new.dashboard_role_ids):
-                return await fail(["A selected role isn't in this server. Refresh the page and pick again."])
-
-            names = {r.id: r.name for r in data.roles}
-            handed_out = _handed_out_roles(states)
-            errors = [
-                f"JoltBot gives out {names[role_id]} ({handed_out[role_id]}), so everyone who gets it that way "
-                "would be able to use this dashboard. Pick a role that only the people you trust have."
-                for role_id in new.dashboard_role_ids
-                if role_id in handed_out and role_id not in current.dashboard_role_ids
-            ]
-            if errors:
+            if errors := _access_role_errors(new, current, data, states):
                 return await fail(errors)
 
             await save_module(
                 session,
                 access.guild_id,  # from the checked URL, never from the form
-                "general",
+                GENERAL,
                 enabled=True,
                 config=new,
                 expected_version=version,
                 actor=access.actor,
             )
     except StaleSettingsError:
-        return await fail(["Someone else saved settings while you were editing. Reload the page and try again."])
+        return await fail([STALE_SETTINGS])
     return RedirectResponse(f"/servers/{access.guild_id}/access?saved=1", status_code=303)
