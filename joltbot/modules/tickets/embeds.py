@@ -199,6 +199,8 @@ def deny_dm(
 ) -> discord.Embed:
     """The DM a denied applicant gets: the server's deny text, then the "kicked" or "kept" ending.
 
+    The ending follows after one blank line. An empty ending adds nothing.
+
     Args:
         settings: The server's ticket settings (the deny texts).
         guild: The server, for its name.
@@ -211,5 +213,9 @@ def deny_dm(
     """
     m = settings.messages
     text = render(m.deny_dm, user=member.mention, user_name=member.display_name, server=guild.name, reason=reason)
-    text += render(m.deny_dm_kicked_suffix if kicked else m.deny_dm_kept_suffix, server=guild.name)
+    # The blank line between the two is added here, not kept in the saved text: the dashboard
+    # trims the ends of every message, so an ending never reliably starts with one.
+    ending = render(m.deny_dm_kicked_suffix if kicked else m.deny_dm_kept_suffix, server=guild.name).strip()
+    if ending:
+        text = f"{text.rstrip()}\n\n{ending}"
     return discord.Embed(description=text[:EMBED_DESCRIPTION_MAX], colour=discord.Colour.red())

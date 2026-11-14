@@ -2,14 +2,29 @@
 
 import pytest
 from pydantic import ValidationError
+from starlette.datastructures import FormData
 
-from joltbot.modules.tickets.settings import ChoiceOption, ChoiceQuestion, FormQuestion, TicketSettings
+from joltbot.modules.tickets.forms import parse_form
+from joltbot.modules.tickets.settings import (
+    ChoiceOption,
+    ChoiceQuestion,
+    FormQuestion,
+    TicketMessages,
+    TicketSettings,
+)
 
 
 def test_defaults_are_valid_and_need_setup():
     settings = TicketSettings()
     assert len(settings.form_questions) >= 1
     assert settings.setup_problems()  # nothing picked yet, so it can't be switched on
+
+
+def test_the_default_messages_come_back_unchanged_from_the_dashboard_form():
+    # Otherwise the first save of a page nobody edited records a change in the audit log.
+    defaults = TicketMessages().model_dump()
+    form = FormData([(f"msg_{key}", text) for key, text in defaults.items()])
+    assert parse_form(form)["messages"] == defaults
 
 
 def test_ids_accept_strings_and_are_saved_as_strings():

@@ -416,6 +416,14 @@ async def test_expired_session_is_refused(db, alice):
 # --------------------------------------------------------------------------- saving
 
 
+async def test_the_denied_dm_preview_marks_its_endings(alice):
+    # The DM puts a blank line before its ending (tickets/embeds.py). The preview does the
+    # same through the "dc-ending" style, so it has to be on both ending previews.
+    page = (await alice.get(f"/servers/{GUILD_A}/tickets")).text
+    for key in ("deny_dm_kept_suffix", "deny_dm_kicked_suffix"):
+        assert f'<span class="dc-ending" id="preview-{key}">' in page
+
+
 async def test_save_ticket_settings_and_audit(db, alice):
     csrf = await csrf_of(alice)
     version = (await tickets_state(db, GUILD_A)).version

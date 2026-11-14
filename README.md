@@ -510,6 +510,8 @@ Roles and channels must belong to the server, and every role JoltBot gives must 
 | Already verified reply | `already_verified` | 2000 | `{user}` `{user_name}` `{server}` |
 | Deny reason hint | `deny_reason_hint` | 100 | none |
 
+The two "Denied DM" endings are added to the Denied DM after a blank line; leave one empty to add nothing.
+
 `{user}` is a mention and `{user_name}` the plain name. `{role}` is the extra role staff picked on accept, and `{role_line}` a ready-made "Role: …" line that is empty when none was picked.
 
 ---

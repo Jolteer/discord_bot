@@ -181,8 +181,10 @@ class TicketMessages(BaseModel):
         min_length=1,
         max_length=3000,
     )
-    deny_dm_kicked_suffix: str = Field("\n\nYou have been removed from the server.", max_length=500)
-    deny_dm_kept_suffix: str = Field("\n\nYou can open a new application if your situation changes.", max_length=500)
+    # The two endings are added to deny_dm after a blank line (see embeds.deny_dm), so they
+    # are stored without one of their own.
+    deny_dm_kicked_suffix: str = Field("You have been removed from the server.", max_length=500)
+    deny_dm_kept_suffix: str = Field("You can open a new application if your situation changes.", max_length=500)
     deny_reason_hint: str = Field("e.g. We couldn't verify your details.", max_length=TEXT_INPUT_PLACEHOLDER_MAX)
 
 

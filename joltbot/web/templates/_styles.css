@@ -1323,6 +1323,12 @@
     overflow-wrap: anywhere;
   }
 
+  /* The ending of the denied DM. JoltBot puts a blank line in front of it when it builds
+     the DM (tickets/embeds.py), so the preview does too. An empty ending adds nothing. */
+  .dc-ending:not(:empty)::before {
+    content: "\A\A";
+  }
+
   .dc-text:empty::before,
   .dc-embed-title:empty::before {
     content: "(empty)";

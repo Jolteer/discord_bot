@@ -291,6 +291,49 @@ async def test_deny_without_kick_keeps_the_member_pending(world):
     assert _fields(world.log.send.await_args.kwargs["embed"])["Action"] == "Not kicked"
 
 
+async def _set_messages(world, **texts):
+    """Save some of the server's message texts, as the dashboard would."""
+    async with world.db.session() as session, session.begin():
+        current = await load_module(session, GUILD_A, "tickets")
+        saved = current.config.model_dump(mode="json")
+        config = TicketSettings.model_validate({**saved, "messages": {**saved["messages"], **texts}})
+        await save_module(
+            session,
+            GUILD_A,
+            "tickets",
+            enabled=True,
+            config=config,
+            expected_version=current.version,
+            actor=TEST_ACTOR,
+        )
+
+
+async def _denied_dm(world, *, kick=False):
+    """Deny the applicant with the reason "Too vague"; returns the text of the DM they get."""
+    ticket, _ = await _open(world)
+    assert await world.manager.deny(world.guild, world.staff, ticket, "Too vague", kick=kick) is None
+    return world.applicant.send.await_args.kwargs["embed"].description
+
+
+@pytest.mark.parametrize(("kick", "ending"), [(False, "You may apply again."), (True, "You were removed.")])
+async def test_the_denied_dm_has_a_blank_line_before_its_ending(world, kick, ending):
+    # The dashboard saves the two endings without a blank line in front of them.
+    await _set_messages(world, deny_dm_kept_suffix="You may apply again.", deny_dm_kicked_suffix="You were removed.")
+    dm = await _denied_dm(world, kick=kick)
+    assert dm.endswith(f"**Reason:** Too vague\n\n{ending}")
+
+
+async def test_an_ending_saved_with_its_own_blank_line_is_not_spaced_twice(world):
+    # How the endings were stored before the dashboard first saved them (and by the KOC migration).
+    await _set_messages(world, deny_dm_kept_suffix="\n\nYou may apply again.")
+    assert (await _denied_dm(world)).endswith("**Reason:** Too vague\n\nYou may apply again.")
+
+
+async def test_an_empty_ending_adds_nothing_to_the_denied_dm(world):
+    await _set_messages(world, deny_dm_kept_suffix="")
+    assert (await _denied_dm(world)).endswith("**Reason:** Too vague")
+
+
 async def test_deny_and_kick_sends_the_dm_before_kicking(world):
     ticket, _ = await _open(world)
     order = []
