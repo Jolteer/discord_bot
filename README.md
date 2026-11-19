@@ -26,6 +26,11 @@ JoltBot runs as **two processes** that share one SQLite database:
   2. A private ticket channel opens for them
   3. Staff **Accept**, **Deny** (keep or kick), or **Close** with buttons
   4. Transcript, optional attachment re-upload, and decision go to a log channel; then the ticket channel is deleted
+- **Alliance join requests**
+  1. Members pick their alliance from a menu and enter their in-game name and governor ID
+  2. The request is posted in that alliance's own request channel
+  3. Only that alliance's reviewer roles (for example its R5 and R4), or an override role, can **Accept** or **Reject**
+  4. Accepting gives that alliance's member role and removes any other alliance's, so nobody holds two
 - **Recovery** — stuck tickets and unfinished closes resume every 5 minutes and at startup
 - **Diagnostics** — `/tickets diagnostics` checks permissions, role hierarchy, and channel visibility
 - **Running it** (section 9)
@@ -41,7 +46,7 @@ JoltBot runs as **two processes** that share one SQLite database:
 
 ### Slash commands
 
-All three are under `/tickets`, take no arguments and work only inside a server.
+The ticket commands are under `/tickets` and take no arguments. The alliance commands are under `/alliances`. All of them work only inside a server.
 
 Discord hides them from members without **Manage Server** by default. A server's admins can show them to other roles under **Server Settings → Integrations → JoltBot**. Seeing a command is not enough to run it: JoltBot checks the "Who can run it" rule on every use. There are no cooldowns.
 
@@ -50,6 +55,9 @@ Discord hides them from members without **Manage Server** by default. A server's
 | `/tickets panel` | Manage Server, or staff | View Channel, Send Messages and Embed Links in the panel channel. Pin Messages to pin the panel (optional) | Posts the application panel in the panel channel and pins it when it can. The previous panel is deleted, so there is only ever one |
 | `/tickets diagnostics` | Manage Server, or staff | Nothing extra | Private report on JoltBot's permissions, role order, category limits and anything not set up |
 | `/tickets grant-existing` | Manage Server only | Manage Roles, and its own role above the accept role(s) | One-time bulk job. After a confirm button, gives the accept role(s) to members who have neither an accept role nor the pending role. Members with an open application are left out. One run per server at a time |
+| `/alliances panel` | Manage Server, or an override role | View Channel, Send Messages and Embed Links in the panel channel. Pin Messages to pin it (optional) | Posts the "choose your alliance" menu in the panel channel. The previous menu is deleted. Run it again after adding, renaming or removing an alliance |
+| `/alliances pending` | Manage Server, or an override role | Nothing extra | Private list of the join requests still waiting, oldest first, each with a link to its message |
+| `/alliances cancel member:` | Manage Server, or an override role | Nothing extra | Cancels that member's waiting request. They are told, it is logged, and they can send a new one at once |
 
 **Staff** means anyone holding one of the server's **Staff roles** (set on the dashboard). Members with Discord's Administrator permission count as staff too, while **Members with Administrator also count as staff** is ticked (it is by default). Manage Server on its own is not staff.
 
@@ -61,8 +69,13 @@ Discord hides them from members without **Manage Server** by default. A server's
 | **Accept** | Each ticket | Staff | Manage Roles, and its own role above every role it gives or removes |
 | **Deny** | Each ticket | Staff | Kick Members and a role above the applicant's, only for "Deny and kick" |
 | **Close** | Each ticket | Staff | Nothing extra |
+| **Choose your alliance** (menu) | The alliance panel | Any member. Turned away if they already belong to that alliance, already have a request waiting, or were rejected by that alliance within the cooldown | Nothing extra |
+| **Accept** | Each join request | That alliance's reviewer roles, or an override role. Never the member themselves | Manage Roles, and its own role above every alliance member role |
+| **Reject** | Each join request | The same people as Accept | Nothing extra |
 
-Every decision also needs View Channel, Send Messages, Embed Links and Attach Files in the log channel, and Manage Channels to delete the ticket channel afterwards. Staff are re-checked on every click, so removing someone's staff role takes effect at once. Replies and confirmations are private to whoever clicked.
+Every ticket decision also needs View Channel, Send Messages, Embed Links and Attach Files in the log channel, and Manage Channels to delete the ticket channel afterwards. Staff are re-checked on every click, so removing someone's staff role takes effect at once. Replies and confirmations are private to whoever clicked.
+
+For alliance requests, being able to see the request channel is not enough: the click itself is checked against the alliance's reviewer roles, and Administrator or Manage Server don't count. Every alliance decision is posted in the alliance log channel (View Channel, Send Messages and Embed Links).
 
 ### Commands for whoever runs JoltBot
 
@@ -155,6 +168,19 @@ joltbot/
 │       ├── context.py      #   loads a server's settings for one event
 │       ├── forms.py        #   dashboard: reads and checks the settings form
 │       ├── web.py          #   dashboard: the Tickets page
+│       └── templates/
+│   └── alliances/
+│       ├── settings.py     #   the per-server settings: the alliances, their roles and channels
+│       ├── constants.py    #   request statuses and issue keys stored in the database
+│       ├── cog.py          #   bot: /alliances commands, leave event, startup wiring
+│       ├── views.py        #   bot: the alliance menu, the join form, the Accept / Reject buttons
+│       ├── service.py      #   request lifecycle: apply, accept (role swap), reject, cancel
+│       ├── store.py        #   request database operations
+│       ├── embeds.py       #   every embed and DM
+│       ├── checks.py       #   who may decide an alliance's requests
+│       ├── context.py      #   loads a server's settings for one event
+│       ├── forms.py        #   dashboard: reads and checks the settings form
+│       ├── web.py          #   dashboard: the Alliances page
 │       └── templates/
 ├── bot/                    # the bot process
 │   ├── __main__.py         #   python -m joltbot.bot: startup checks, retry loop, exit codes
@@ -437,6 +463,26 @@ These steps are the same for every server, and each server's settings are its ow
 
 The `/tickets` commands are only visible to members with **Manage Server** by default. To let other roles see them, go to **Server Settings → Integrations → JoltBot**. Members with a staff role can also run `panel` and `diagnostics`; `grant-existing` always needs Manage Server.
 
+### Alliance join requests
+
+For servers where members belong to one of several alliances, and each alliance has channels only its own members should see.
+
+1. **Create the roles and channels in Discord.** Per alliance: a member role (it is what unlocks that alliance's channels), its leadership roles, and a request channel only its leadership can see. Plus one channel for the menu and one staff-only log channel.
+2. **Role order.** Drag the **JoltBot** role above every alliance member role. It does not need to be above the leadership roles.
+3. **Dashboard → Alliances.** Add each alliance: its name, member role, reviewer roles and request channel. Pick the override roles (optional), the panel channel and the log channel. Tick **Alliance requests are ON** and save.
+4. **In Discord, run `/alliances panel`** to post the menu.
+5. **Make sure nothing else hands out the alliance roles.** Remove them from **Tickets & verification → Extra role choices** and from the dropdown questions (the Alliances page warns you if they are still there), and from any reaction-role or self-role tool.
+
+A member picks their alliance and enters their in-game name and governor ID. The request appears in that alliance's request channel with the member, both answers, the age of their Discord account and the date they joined the server. Whoever accepts or rejects is named on the message and in the log channel, and the member gets a DM.
+
+Rules JoltBot keeps:
+
+- One waiting request per member.
+- To switch alliance, a member asks the new one. They keep their old role until the new alliance accepts, and then lose it in the same step.
+- After a rejection, the member waits (24 hours unless you change it) before asking the same alliance again. Another alliance can be asked straight away.
+- Nobody can accept or reject their own request.
+- A request closes by itself when the member leaves the server.
+
 ### Letting moderators use the dashboard
 
 By default only the owner and members with **Manage Server** or **Administrator** can open a server's dashboard. To let others in without giving them those permissions:
@@ -491,6 +537,25 @@ Every setting below belongs to one server and is changed on its dashboard. Chang
 | Messages | `messages.<name>` | see below | The texts members see |
 
 Roles and channels must belong to the server, and every role JoltBot gives must sit below JoltBot's own role. A role with moderation permissions, or a dashboard access role, can only be made giveable by the owner or an Administrator.
+
+**Alliances** (Dashboard → Alliances)
+
+| Setting | Key | Default | Notes |
+|---|---|---|---|
+| Alliance requests are ON | `enabled` | off | Needs at least one alliance, the panel channel and the log channel |
+| Alliances | `alliances` | none | Up to 10. Each has the four settings below |
+| Name | `name` | | Shown in the menu. Each alliance needs a different one |
+| Member role | `member_role_id` | | Given on accept. Each alliance needs a different one. It can't also be a reviewer or override role |
+| Reviewer roles | `reviewer_role_ids` | | 1 to 10. Who may accept or reject this alliance's requests |
+| Request channel | `request_channel_id` | | Where this alliance's requests are posted. Keep it leadership-only |
+| Override roles | `override_role_ids` | none | Up to 10. May decide any alliance's requests and run the `/alliances` commands |
+| Panel channel | `panel_channel_id` | none | Required. Where `/alliances panel` posts the menu |
+| Log channel | `log_channel_id` | none | Required. Every decision is posted here. Keep it staff-only |
+| Wait after a rejection | `reject_cooldown_hours` | 24 | 0 to 720 hours before the member can ask the same alliance again. 0 means no wait |
+| Panel title | `panel_title` | "⚔️ Choose your alliance" | Up to 256 characters. `{server}` is filled in |
+| Panel text | `panel_description` | see the page | Up to 2000 characters. `{server}` is filled in |
+
+The same rules about roles and channels apply as for tickets. An alliance's member role is the role JoltBot gives; the reviewer and override roles are only read, so they may be as powerful as you like.
 
 **Messages.** Placeholders are written in curly brackets and filled in when the message is sent. One that a message doesn't support is left as typed. `{guild}` still works as an old name for `{server}`.
 

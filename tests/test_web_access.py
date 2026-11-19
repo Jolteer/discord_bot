@@ -477,12 +477,19 @@ async def test_general_page_toggles_modules(db, alice):
             "enabled_tickets": "on",
             "version_general": "1",
             "version_tickets": "1",
+            "version_alliances": "1",
         },
     )
     assert r.status_code == 400 and "isn't set up" in html.unescape(r.text)
     r = await alice.post(
         f"/servers/{GUILD_A}/general",
-        data={"csrf_token": csrf, "embed_color": "#123456", "version_general": "1", "version_tickets": "1"},
+        data={
+            "csrf_token": csrf,
+            "embed_color": "#123456",
+            "version_general": "1",
+            "version_tickets": "1",
+            "version_alliances": "1",
+        },
     )
     assert r.status_code == 303
     async with db.session() as session:
@@ -512,7 +519,14 @@ async def test_overview_has_no_warning_while_the_bot_is_online(db, alice):
 
 
 def _general_form(csrf, **fields):
-    return {"csrf_token": csrf, "embed_color": "#123456", "version_general": "1", "version_tickets": "1", **fields}
+    return {
+        "csrf_token": csrf,
+        "embed_color": "#123456",
+        "version_general": "1",
+        "version_tickets": "1",
+        "version_alliances": "1",
+        **fields,
+    }
 
 
 async def _general(db, guild_id=GUILD_A):
@@ -758,6 +772,7 @@ async def test_a_module_without_a_page_can_be_switched_on_under_general(db, alic
         "enabled_hello": "on",
         "version_general": "1",
         "version_tickets": "1",
+        "version_alliances": "1",
         "version_hello": "0",
     }
     assert (await alice.post(f"/servers/{GUILD_A}/general", data=form)).status_code == 303

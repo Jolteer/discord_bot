@@ -1,0 +1,90 @@
+{% extends "guild/_layout.html" %}
+{% import "_form.html" as f %}
+
+{% block page %}
+{% call f.page_head("Alliances", "Members ask to join their alliance; only that alliance's leadership can let them in.") %}
+  {{ f.refresh_button(guild.id, csrf_token, "/servers/" ~ guild.id ~ "/alliances", "Refresh roles & channels") }}
+{% endcall %}
+
+<div class="mt-5 space-y-2">{{ f.messages_box(errors, warnings, issues, saved) }}</div>
+
+<nav class="jb-jump jb-scroll-x mt-6" aria-label="On this page">
+  {% for id, label in [("status", "Status"), ("alliances", "Alliances"), ("override", "Override roles"),
+                       ("channels", "Channels"), ("behaviour", "Behaviour"), ("panel", "Panel text")] %}
+    <a href="#{{ id }}" data-spy>{{ label }}</a>
+  {% endfor %}
+</nav>
+
+<form method="post" action="/servers/{{ guild.id }}/alliances" class="mt-5 space-y-5" data-savebar>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="version" value="{{ version }}">
+
+  {% call f.section("Status", id="status", icon="bolt") %}
+    {{ f.toggle("enabled", "Alliance requests are ON", enabled,
+                "While off, JoltBot ignores the alliance menu and the Accept / Reject buttons.") }}
+    <p class="text-sm text-jb-muted">After setting up, post the menu in Discord with <code class="jb-code">/alliances panel</code>. Run it again whenever you add, rename or remove an alliance.</p>
+  {% endcall %}
+
+  {% call f.section("Alliances", "A member picks one of these and its reviewers accept or reject them. Accepting gives that alliance's member role and removes any other alliance's. Clear an alliance's name to remove it.", id="alliances", icon="shield") %}
+    {% for a in alliances %}
+      {% set n = loop.index0 %}
+      <div class="jb-subcard">
+        <p class="jb-label-caps">Alliance {{ loop.index }}</p>
+        <div class="mt-2 grid gap-5 sm:grid-cols-2">
+          <label class="block">
+            <span class="jb-field-label">Name</span>
+            <span class="jb-help mt-0.5">Shown in the menu, e.g. Kings Of Chaos (Top 1).</span>
+            <input name="a_name_{{ n }}" value="{{ a.name }}" maxlength="100" class="jb-input mt-1.5">
+          </label>
+          {{ f.role_select("a_role_" ~ n, "Member role", roles, a.member_role_id,
+                           "Given when a request is accepted. It is what unlocks the alliance's channels.") }}
+          {{ f.channel_select("a_channel_" ~ n, "Request channel", text_channels, a.request_channel_id,
+                              "Requests are posted here with the Accept / Reject buttons. Make it leadership-only.") }}
+        </div>
+        <div class="mt-5">
+          {{ f.role_picker("a_reviewers_" ~ n, "Reviewer roles", roles, a.reviewer_role_ids,
+                           "Who may accept or reject this alliance's requests, e.g. its R5 and R4. Seeing the channel is not enough: only these roles (and the override roles) can press the buttons.") }}
+        </div>
+      </div>
+    {% endfor %}
+    <p class="jb-help">Save to get another empty block (up to 10 alliances). JoltBot's own role must be above every member role.</p>
+  {% endcall %}
+
+  {% call f.section("Override roles", "These roles can decide any alliance's requests and run the /alliances commands.", id="override", icon="key") %}
+    {{ f.role_picker("override_role_ids", "Override roles (optional)", roles, values.override_role_ids,
+                     "E.g. King and moderators. Nobody can decide their own request, whatever roles they hold.") }}
+  {% endcall %}
+
+  {% call f.section("Channels", "Where JoltBot posts the menu and keeps its record.", id="channels", icon="hash") %}
+    <div class="grid gap-5 sm:grid-cols-2">
+      {{ f.channel_select("panel_channel_id", "Panel channel", text_channels, values.panel_channel_id,
+                          "Where the \"choose your alliance\" menu is posted.") }}
+      {{ f.channel_select("log_channel_id", "Log channel", text_channels, values.log_channel_id,
+                          "Every decision is posted here. Make it staff-only.") }}
+    </div>
+  {% endcall %}
+
+  {% call f.section("Behaviour", "What happens after a request is rejected.", id="behaviour", icon="clock") %}
+    <label class="block max-w-xs">
+      <span class="jb-field-label">Wait after a rejection (hours)</span>
+      <span class="jb-help mt-0.5">Before the member can ask the same alliance again. 0 means no wait. Another alliance can be asked straight away.</span>
+      <input type="number" name="reject_cooldown_hours" value="{{ values.reject_cooldown_hours }}" min="0" max="{{ max_cooldown_hours }}"
+             class="jb-input mt-1.5">
+    </label>
+  {% endcall %}
+
+  {% call f.section("Panel text", "Shown above the alliance menu. {server} is replaced with your server's name.", id="panel", icon="message") %}
+    <label class="block">
+      <span class="jb-field-label">Panel title</span>
+      <input name="panel_title" value="{{ values.panel_title }}" maxlength="256" class="jb-input jb-input-mono mt-1.5">
+    </label>
+    <label class="block">
+      <span class="jb-field-label">Panel text</span>
+      <span class="jb-help mt-0.5">Supports **bold**.</span>
+      <textarea name="panel_description" rows="5" maxlength="2000" class="jb-input jb-input-mono mt-1.5">{{ values.panel_description }}</textarea>
+    </label>
+  {% endcall %}
+
+  {{ f.savebar() }}
+</form>
+{% endblock %}

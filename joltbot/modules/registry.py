@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .alliances.constants import MODULE as ALLIANCES
+from .alliances.settings import AllianceSettings
 from .base import ModuleSettingsModel
 from .general.settings import MODULE as GENERAL
 from .general.settings import GeneralSettings
@@ -58,6 +60,14 @@ MODULES: dict[str, ModuleInfo] = {
             settings_model=TicketSettings,
             cog="joltbot.modules.tickets.cog",
             web="joltbot.modules.tickets.web",
+        ),
+        ModuleInfo(
+            name=ALLIANCES,
+            title="Alliances",
+            description="Members ask to join their alliance; only that alliance's leadership can let them in.",
+            settings_model=AllianceSettings,
+            cog="joltbot.modules.alliances.cog",
+            web="joltbot.modules.alliances.web",
         ),
     )
 }

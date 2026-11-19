@@ -23,6 +23,7 @@ from ..modules.registry import MODULES
 from .interactions import safe_reply
 
 if TYPE_CHECKING:
+    from ..modules.alliances.service import AllianceManager
     from ..modules.tickets.service import TicketManager
 
 log = logging.getLogger(__name__)
@@ -68,11 +69,13 @@ class JoltBot(commands.Bot):
     Attributes:
         failed_modules: Names of modules whose cog failed to load at startup.
         tickets: Set by the tickets cog on load; ticket lifecycle entry point.
+        alliances: Set by the alliances cog on load; alliance join request entry point.
         config: Shared ``AppConfig``.
         db: Shared ``Database`` for this process.
     """
 
     tickets: TicketManager  # set by the tickets cog when it loads
+    alliances: AllianceManager  # set by the alliances cog when it loads
 
     def __init__(self, config: AppConfig) -> None:
         """Set up the intents, the command tree and the database.

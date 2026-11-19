@@ -161,6 +161,51 @@ class Ticket(Base):
         return [n for n in (self.notes or "").split("\n") if n]
 
 
+class AllianceRequest(Base):
+    """A member asking to join one alliance (``status``): pending -> accepted | rejected | closed | cancelled.
+
+    'deciding' is the short step between an Accept click and the role change
+    having worked. The partial unique index below is what really prevents a
+    second request: another pending/deciding row for the same member fails
+    atomically. An alliance is identified by its member role (``alliance_role_id``).
+    """
+
+    __tablename__ = "alliance_requests"
+
+    id: Mapped[int] = mapped_column(AutoId, primary_key=True, autoincrement=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, _guild_fk(), index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger)
+    username: Mapped[str] = mapped_column(String(100))
+    alliance_role_id: Mapped[int] = mapped_column(BigInteger)
+    # The alliance's name when the request was made, so the record still reads well if it is renamed or removed.
+    alliance_name: Mapped[str] = mapped_column(String(100))
+    ingame_name: Mapped[str] = mapped_column(String(100))
+    governor_id: Mapped[str] = mapped_column(String(32))
+    # When the member joined the server, kept so the request message can be redrawn after they left.
+    member_joined_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    # The message with the Accept / Reject buttons. A click finds its request by message_id.
+    channel_id: Mapped[int | None] = mapped_column(BigInteger)
+    message_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
+    decided_by: Mapped[int | None] = mapped_column(BigInteger)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # When the claim (pending -> deciding) happened.
+    claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+    __table_args__ = (
+        Index(
+            "one_active_alliance_request_per_user",
+            "guild_id",
+            "user_id",
+            unique=True,
+            sqlite_where=text("status IN ('pending', 'deciding')"),
+            postgresql_where=text("status IN ('pending', 'deciding')"),
+        ),
+    )
+
+
 class PanelMessage(Base):
     """Where a module's public panel (e.g. the "Open Application" button) was posted."""
 

@@ -6,7 +6,7 @@
 {% block main_class %}jb-container jb-container-wide py-6 lg:py-9{% endblock %}
 {% block content %}
 {# Icons for the sidebar, by module name. A module without one gets a plain box. #}
-{% set module_icons = {"general": "sliders", "tickets": "ticket"} %}
+{% set module_icons = {"general": "sliders", "tickets": "ticket", "alliances": "shield"} %}
 <div class="grid gap-6 lg:grid-cols-[15.5rem_minmax(0,1fr)] lg:gap-10">
   <aside class="min-w-0 lg:sticky lg:top-[calc(var(--jb-header-h)+2.25rem)] lg:self-start">
     {# Server switcher. The list of servers is fetched from the server list page when it is opened

@@ -162,6 +162,7 @@ def fake_member(
     member.guild = guild
     member.roles = list(roles)
     member.created_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    member.joined_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
     member.display_avatar.url = "https://cdn.discordapp.com/embed/avatars/0.png"
     member.guild_permissions = discord.Permissions(administrator=administrator, manage_guild=manage_guild)
     member.__str__.return_value = name
@@ -180,9 +181,16 @@ def fake_member(
     async def kick(reason: str | None = None) -> None:
         guild.remove_member(user_id)
 
+    async def edit(*, roles: Any = None, reason: str | None = None) -> None:
+        # Like Discord: the member's whole role list is replaced in one call.
+        if roles is not None:
+            member.roles[:] = list(roles)
+            refresh_top_role()
+
     refresh_top_role()
     member.add_roles = AsyncMock(side_effect=add_roles)
     member.remove_roles = AsyncMock(side_effect=remove_roles)
+    member.edit = AsyncMock(side_effect=edit)
     member.kick = AsyncMock(side_effect=kick)
     member.send = AsyncMock()
     if register:
@@ -214,6 +222,49 @@ def fake_text_channel(guild: FakeGuild, channel_id: int, name: str = "channel", 
 
     channel.delete = AsyncMock(side_effect=delete)
     guild.add_channel(channel)
+    return channel
+
+
+def record_messages(channel: Any, first_id: int = 9000) -> Any:
+    """Make ``channel.send`` return real message stand-ins, kept in ``channel.sent``.
+
+    Each has an ``id`` and remembers its ``content``, ``embed`` and ``view``.
+    Editing one, directly or through ``channel.get_partial_message(id)``,
+    changes what it remembers, so a test can read back what a message looks
+    like now. Returns the channel.
+    """
+    channel.sent = []
+
+    async def send(content: str | None = None, **options: Any) -> Any:
+        message = SimpleNamespace(
+            id=first_id + len(channel.sent),
+            channel=channel,
+            content=content,
+            embed=options.get("embed"),
+            view=options.get("view"),
+            pin=AsyncMock(),
+            delete=AsyncMock(),
+        )
+
+        async def edit(**changes: Any) -> None:
+            for key, value in changes.items():
+                setattr(message, key, value)
+
+        message.edit = AsyncMock(side_effect=edit)
+        channel.sent.append(message)
+        return message
+
+    def partial(message_id: int) -> Any:
+        found = next((m for m in channel.sent if m.id == message_id), None)
+        if found is not None:
+            return found
+        missing = SimpleNamespace(id=message_id)
+        missing.edit = AsyncMock(side_effect=http_error(discord.NotFound, 404))
+        missing.delete = AsyncMock(side_effect=http_error(discord.NotFound, 404))
+        return missing
+
+    channel.send = AsyncMock(side_effect=send)
+    channel.get_partial_message = MagicMock(side_effect=partial)
     return channel
 
 

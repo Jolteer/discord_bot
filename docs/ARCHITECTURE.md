@@ -77,8 +77,9 @@ module's cog; the dashboard mounts each module's FastAPI router.
 - `toggleable` — `False` for always-on modules like `general`
 - `cog` / `web` — optional dotted paths loaded only by the matching process
 
-Current modules: **general** (embed colour + module toggles) and **tickets**
-(verification flow).
+Current modules: **general** (embed colour + module toggles), **tickets**
+(verification flow) and **alliances** (join requests decided by each alliance's
+own leadership).
 
 Adding a module: create `joltbot/modules/<name>/` with `settings.py`, optional
 `cog.py` / `web.py` / `templates/`, then one `ModuleInfo` entry. No other
@@ -100,6 +101,8 @@ has a worked example, which `tests/test_example_module.py` runs.
 - Panel and ticket control views (`modules/tickets/views/`) use fixed `custom_id`s and `timeout=None`.
 - Registered in `cog_load` so buttons on old messages still work after restart.
 - Legacy `rokverify:` / `rokticket:` IDs remain registered for Gatekeeper panels.
+- The alliance menu and the Accept / Reject buttons (`modules/alliances/views.py`) work the same
+  way. A click finds its request by the ID of the message it was made on.
 
 ### Events
 
@@ -150,6 +153,48 @@ Key rules (see `modules/tickets/service.py` and `store.py`):
 - `TicketSettings.assignable_roles()` is the one list of roles JoltBot gives.
   Role-order checks, diagnostics and the dashboard's powerful-role rule all read it.
 
+## Alliance join requests
+
+```
+member picks an alliance from the menu  ->  form: in-game name + governor ID
+        │
+        ▼
+   insert row (pending)  ->  post it in that alliance's request channel
+        │
+        ├── Accept:  claim pending → deciding   (atomic UPDATE)
+        │            set the member's roles in one call (new alliance role in, others out)
+        │            deciding → accepted        (or back to pending if Discord refused)
+        ├── Reject:  pending → rejected         (atomic UPDATE, optional reason)
+        ├── member leaves:           pending → closed
+        └── /alliances cancel:       pending → cancelled
+        │
+        ▼
+ edit the request message (buttons greyed out) → DM the member → post in the log channel
+```
+
+Key rules (see `modules/alliances/service.py` and `store.py`):
+
+- **Who may decide** is checked in the button handler on every click
+  (`checks.can_review`): a reviewer role of that alliance, or an override role.
+  Channel visibility, Administrator and Manage Server are not part of it. Nobody
+  decides their own request.
+- An alliance is identified by its member role (`AllianceRequest.alliance_role_id`),
+  so renaming one keeps its waiting requests. A request whose alliance was removed
+  from the settings can't be accepted, only cancelled.
+- Partial unique index: one `pending`/`deciding` request per `(guild_id, user_id)`.
+- Every way out of `pending` is a conditional UPDATE, so of two reviewers clicking
+  at once exactly one wins and the other is told who handled it.
+- On accept the member's whole role list is sent in one request (`Member.edit(roles=…)`),
+  so there is no moment with two alliance roles, or with the old one gone and the
+  new one not given.
+- A request left in `deciding` by a restart is reopened when the bot starts
+  (`store.release_stuck`). Accepting it again gives the same result.
+- The cooldown after a rejection is per alliance, read from the member's last
+  rejected request to that alliance.
+- `AllianceSettings.assignable_roles()` lists the member roles, which puts them
+  under the dashboard's powerful-role rule and keeps them from being dashboard
+  access roles.
+
 ## Dashboard auth and access control
 
 1. **OAuth** (`identify guilds`): `/login` → Discord → `/auth/callback` with
@@ -193,6 +238,7 @@ Key rules (see `modules/tickets/service.py` and `store.py`):
 | `guilds` | Servers JoltBot has joined; `left_at` + 30-day purge |
 | `module_settings` | Per-guild JSON config + `enabled` + optimistic `version` |
 | `tickets` | Application lifecycle |
+| `alliance_requests` | Alliance join requests and their decisions |
 | `panel_messages` | Last posted panel message per module |
 | `audit_log` | Who changed settings |
 | `guild_issues` | Bot problems with no interaction to reply on |
