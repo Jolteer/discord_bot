@@ -21,10 +21,10 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from ...core.types import utcnow
-from . import diffs
+from . import diffs, retention
 from .constants import (
     DELETED_BY_UNKNOWN,
     EVENT_AVATAR,
@@ -71,6 +71,7 @@ STORED_ATTACHMENTS = 10  # attachment links kept per message
 # An edit of a message that isn't in memory is only logged if Discord says it was edited
 # this recently. Pins and link previews also send an "update" for old messages.
 EDIT_RECENT_SECONDS = 30
+CLEANUP_EVERY_HOURS = 24  # how often entries older than each server's retention are deleted
 
 Action = discord.AuditLogAction
 CHANNEL_AUDIT_ACTIONS = (
@@ -194,12 +195,32 @@ class ModLog(commands.Cog):
         self.bot = bot
 
     async def cog_load(self) -> None:
-        """Create the manager (audit buffer + channel queues) when the extension loads."""
+        """Create the manager (audit buffer + channel queues) and start the daily cleanup."""
         self.bot.modlog = ModLogManager(self.bot)
+        self.cleanup.start()
 
     async def cog_unload(self) -> None:
-        """Stop the channel workers when the extension unloads."""
+        """Stop the cleanup and the channel workers when the extension unloads."""
+        self.cleanup.cancel()
         await self.bot.modlog.close()
+
+    @tasks.loop(hours=CLEANUP_EVERY_HOURS)
+    async def cleanup(self) -> None:
+        """At startup and then once a day, delete entries older than each server's retention period.
+
+        A failure is logged and tried again the next day; it must not stop the loop.
+        """
+        try:
+            deleted = await retention.purge_expired(self.bot.db)
+            if deleted:
+                log.info("Deleted %d old mod log entries in %d server(s)", sum(deleted.values()), len(deleted))
+        except Exception:
+            log.exception("Mod log cleanup failed")
+
+    @cleanup.before_loop
+    async def _before_cleanup(self) -> None:
+        """Hold the first run until the bot is connected."""
+        await self.bot.wait_until_ready()
 
     @property
     def manager(self) -> ModLogManager:
