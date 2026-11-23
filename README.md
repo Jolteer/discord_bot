@@ -216,12 +216,12 @@ CONTRIBUTING.md             # style, PRs, how to add a module
 DEPLOYMENT.md               # how the live server is set up, with its exact commands
 Dockerfile, docker-compose.yml, .dockerignore
 .env.example                # copy to .env and fill in (section 3)
-alembic.ini, pyproject.toml # migration and lint/test settings
+alembic.ini, pyproject.toml # migration and lint/type-check/test settings
 requirements.txt            # direct dependencies, exact versions (edit this one)
 requirements.lock           # every dependency, exact versions + checksums (generated; used by Docker)
-requirements-dev.txt        # requirements.txt + pytest + ruff (edit this one)
+requirements-dev.txt        # requirements.txt + pytest + ruff + mypy (edit this one)
 requirements-dev.lock       # the same, fully pinned + checksums (generated; used by CI and for development)
-.github/workflows/ci.yml    # lint, format check, tests, Docker build on every push / PR
+.github/workflows/ci.yml    # lint, format check, type check, tests, Docker build on every push / PR
 ```
 
 ---
@@ -358,9 +358,10 @@ python -m joltbot.web --reload   # terminal 2; then open http://localhost:8000
 pytest                     # all tests; they need no Discord access
 ruff check .               # lint (add --fix to fix the simple ones)
 ruff format .              # format the code (CI runs `ruff format --check .`)
+mypy                       # type check joltbot/ and scripts/
 ```
 
-GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs all three on every push and pull request, then builds the Docker image and checks that `/health` answers.
+GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs all four on every push and pull request, then builds the Docker image and checks that `/health` answers.
 
 ### Frontend files (Tailwind CSS and htmx)
 

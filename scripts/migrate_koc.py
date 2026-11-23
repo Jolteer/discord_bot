@@ -354,7 +354,7 @@ async def migrate(
                         summary.tickets_skipped += 1  # copied by an earlier run
                         continue
                     # That number is already used by a ticket in another server: give it a new one.
-                    ticket.id = None
+                    ticket.id = None  # type: ignore[assignment]  # None = let the database pick the number
                     summary.notes.append(f"Old ticket #{row['id']} got a new number (#{row['id']} was taken).")
                 session.add(ticket)
                 summary.tickets_copied += 1

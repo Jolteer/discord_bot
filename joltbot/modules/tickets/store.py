@@ -16,7 +16,7 @@ from datetime import datetime
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 
-from ...core.db import Database
+from ...core.db import Database, rows_changed
 from ...core.models import Ticket
 from ...core.types import utcnow
 from .constants import ACTIVE_STATUSES, STATUS_CLOSED, STATUS_CLOSING, STATUS_OPEN
@@ -72,7 +72,7 @@ async def set_channel(db: Database, ticket_id: int, channel_id: int) -> bool:
         result = await session.execute(
             update(Ticket).where(Ticket.id == ticket_id, Ticket.status == STATUS_OPEN).values(channel_id=channel_id)
         )
-        return result.rowcount == 1
+        return rows_changed(result) == 1
 
 
 async def delete_reservation(db: Database, ticket_id: int) -> None:
@@ -253,7 +253,7 @@ async def claim(
                 claimed_at=utcnow(),
             )
         )
-        return result.rowcount == 1
+        return rows_changed(result) == 1
 
 
 async def release(db: Database, ticket_id: int) -> None:

@@ -1,6 +1,7 @@
-# Everything in requirements.txt, plus the test and lint tools, pinned exactly.
+# Everything in requirements.txt, plus the test, lint and type-check tools, pinned exactly.
 # Edit versions here, then regenerate requirements-dev.lock (see requirements.txt).
 -r requirements.txt
 pytest==9.2.0
 pytest-asyncio==1.4.1.post1
 ruff==0.17.4
+mypy==2.4.1

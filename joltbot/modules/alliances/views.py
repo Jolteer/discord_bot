@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import discord
 
@@ -60,8 +60,10 @@ class JoinRequestModal(discord.ui.Modal):
         alliance_name: Its name, for the form's title.
     """
 
-    ingame_name = discord.ui.TextInput(label="In-game name", min_length=1, max_length=INGAME_NAME_MAX)
-    governor_id = discord.ui.TextInput(
+    ingame_name: discord.ui.TextInput[JoinRequestModal] = discord.ui.TextInput(
+        label="In-game name", min_length=1, max_length=INGAME_NAME_MAX
+    )
+    governor_id: discord.ui.TextInput[JoinRequestModal] = discord.ui.TextInput(
         label="Governor ID",
         placeholder="The number on your in-game profile",
         min_length=1,
@@ -101,7 +103,9 @@ class JoinRequestModal(discord.ui.Modal):
         text = await self.bot.alliances.create_request(member, self.alliance_role_id, name, governor)
         await interaction.followup.send(text, ephemeral=True)
 
-    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+    # The ignore: a form's on_error takes no ``item`` (discord.py's own Modal is declared the
+    # same way), while the View class that Modal is built on does.
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:  # type: ignore[override]
         """Log an unexpected failure and ask the member to try again."""
         log.exception("Alliance join form failed", exc_info=error)
         await safe_reply(interaction, "Something went wrong sending your request. Please try again.")
@@ -131,10 +135,12 @@ class AlliancePanelView(discord.ui.View):
         # Discord refuses a menu without options. The copy registered at startup is never
         # posted, so it only needs a stand-in.
         options = options or [discord.SelectOption(label="-", value="0")]
-        select = discord.ui.Select(
+        select: discord.ui.Select[AlliancePanelView] = discord.ui.Select(
             custom_id=CHOOSE_ID, placeholder="Choose your alliance", min_values=1, max_values=1, options=options
         )
-        select.callback = self.choose
+        # Assigning ``callback`` is discord.py's way to give a component built in code its
+        # handler. A type checker sees a method being replaced, hence the ignores in this file.
+        select.callback = self.choose  # type: ignore[method-assign]
         self.add_item(select)
 
     async def choose(self, interaction: discord.Interaction) -> None:
@@ -159,7 +165,8 @@ class AlliancePanelView(discord.ui.View):
             await interaction.response.send_message(NOT_SET_UP, ephemeral=True)
             return
         # Read from the click itself, not from the Select object: this one view serves every server.
-        values = (interaction.data or {}).get("values") or []
+        data = cast("dict[str, Any]", interaction.data or {})
+        values = data.get("values") or []
         picked = str(values[0]) if values else ""
         alliance = ctx.settings.alliance_for(int(picked)) if picked.isascii() and picked.isdigit() else None
         if alliance is None:
@@ -200,7 +207,7 @@ class RejectReasonModal(discord.ui.Modal, title="Reject request"):
         request_id: The request being rejected.
     """
 
-    reason = discord.ui.TextInput(
+    reason: discord.ui.TextInput[RejectReasonModal] = discord.ui.TextInput(
         label="Reason (optional, sent to the member)",
         style=discord.TextStyle.paragraph,
         required=False,
@@ -220,10 +227,12 @@ class RejectReasonModal(discord.ui.Modal, title="Reject request"):
         if request is None or interaction.guild is None:
             await interaction.followup.send(GONE, ephemeral=True)
             return
-        text = await self.bot.alliances.reject(interaction.guild, interaction.user, request, self.reason.value)
+        # The cast: inside a server, Discord always sends whoever clicked as a Member.
+        reviewer = cast(discord.Member, interaction.user)
+        text = await self.bot.alliances.reject(interaction.guild, reviewer, request, self.reason.value)
         await interaction.followup.send(text, ephemeral=True)
 
-    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:  # type: ignore[override]
         """Log an unexpected failure and ask the reviewer to try again."""
         log.exception("Reject reason form failed", exc_info=error)
         await safe_reply(interaction, "Something went wrong. Please try again in a moment.")
@@ -245,8 +254,10 @@ class RequestDecisionView(discord.ui.View):
             (ACCEPT_ID, "Accept", "✅", discord.ButtonStyle.success, self.accept),
             (REJECT_ID, "Reject", "❌", discord.ButtonStyle.danger, self.reject),
         ):
-            button = discord.ui.Button(label=label, emoji=emoji, style=style, custom_id=button_id, disabled=disabled)
-            button.callback = callback
+            button: discord.ui.Button[RequestDecisionView] = discord.ui.Button(
+                label=label, emoji=emoji, style=style, custom_id=button_id, disabled=disabled
+            )
+            button.callback = callback  # type: ignore[method-assign]
             self.add_item(button)
 
     async def _pending_request(self, interaction: discord.Interaction) -> AllianceRequest | None:
@@ -279,7 +290,9 @@ class RequestDecisionView(discord.ui.View):
             return
         # Answer the click first: the role change, DM and log can take longer than Discord's 3 seconds.
         await interaction.response.defer(ephemeral=True, thinking=True)
-        text = await self.bot.alliances.accept(interaction.guild, interaction.user, request)
+        # The cast: inside a server, Discord always sends whoever clicked as a Member.
+        reviewer = cast(discord.Member, interaction.user)
+        text = await self.bot.alliances.accept(interaction.guild, reviewer, request)
         await interaction.followup.send(text, ephemeral=True)
 
     async def reject(self, interaction: discord.Interaction) -> None:

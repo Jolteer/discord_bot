@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -78,7 +79,7 @@ async def mark_guild_left(session: AsyncSession, guild_id: int) -> None:
 
 
 async def sync_guilds(
-    session: AsyncSession, present: list[GuildInfo], unavailable_ids: set[int] = frozenset()
+    session: AsyncSession, present: list[GuildInfo], unavailable_ids: Collection[int] = frozenset()
 ) -> tuple[list[int], list[int]]:
     """Make the guilds table match the servers the bot is actually in.
 

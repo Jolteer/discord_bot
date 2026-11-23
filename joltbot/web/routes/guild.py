@@ -16,6 +16,7 @@ from fastapi.responses import RedirectResponse, Response
 from pydantic import ValidationError
 from sqlalchemy import delete, select
 
+from ...core.db import rows_changed
 from ...core.discord_rest import DiscordError, GuildData
 from ...core.guild_settings import ModuleState, StaleSettingsError, load_all, save_module
 from ...core.health import bot_status
@@ -216,7 +217,7 @@ async def dismiss_issue(request: Request, access: RequireGuild, issue_id: int) -
         result = await session.execute(
             delete(GuildIssue).where(GuildIssue.id == issue_id, GuildIssue.guild_id == access.guild_id)
         )
-    if result.rowcount != 1:
+    if rows_changed(result) != 1:
         raise HTTPException(404, "That warning doesn't exist (maybe it was already cleared).")
     return RedirectResponse(f"/servers/{access.guild_id}", status_code=303)
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import discord
 from discord import app_commands
@@ -332,7 +332,8 @@ class Tickets(commands.GroupCog, group_name="tickets", group_description="Ticket
         ctx = await load_context(self.bot, guild.id)
         channel, problem = self._panel_channel(guild, ctx)
         if channel is None:
-            await interaction.followup.send(problem, ephemeral=True)
+            # The cast: _panel_channel always gives a reason when it gives no channel.
+            await interaction.followup.send(cast(str, problem), ephemeral=True)
             return
 
         await self._delete_old_panel(guild)

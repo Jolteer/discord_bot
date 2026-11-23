@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..modules.base import ModuleSettingsModel
 from ..modules.registry import MODULES, get_module
+from .db import rows_changed
 from .models import AuditLog, ModuleSetting
 from .types import utcnow
 
@@ -229,7 +230,7 @@ async def save_module(
                 enabled=enabled, config=stored, version=expected_version + 1, updated_at=now, updated_by=actor.user_id
             )
         )
-        if result.rowcount != 1:
+        if rows_changed(result) != 1:
             raise StaleSettingsError()
 
     session.add(

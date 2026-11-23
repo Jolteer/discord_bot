@@ -38,7 +38,7 @@ CLOSING_REASON_LIMIT = 900  # the deny reason, inside the closing notice's descr
 LOG_REASON_LIMIT = 1000  # the deny reason, in its own field of the log embed
 
 
-def ts(dt: datetime | None, style: str = "f") -> str:
+def ts(dt: datetime | None, style: discord.utils.TimestampStyle = "f") -> str:
     """A Discord timestamp tag, which every reader sees in their own time zone. ``-`` for no time."""
     return discord.utils.format_dt(dt, style) if dt else "-"
 

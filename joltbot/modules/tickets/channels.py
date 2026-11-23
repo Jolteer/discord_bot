@@ -10,7 +10,9 @@ from ...core.limits import CHANNEL_NAME_MAX
 from .checks import roles_by_id
 from .settings import TicketSettings
 
-Overwrites = dict[discord.Role | discord.Member, discord.PermissionOverwrite]
+# discord.Object is never used as a key here. It is in the type because that is what
+# ``Guild.create_text_channel`` asks for, and a dict's key type has to match exactly.
+Overwrites = dict[discord.Role | discord.Member | discord.Object, discord.PermissionOverwrite]
 
 
 def ticket_channel_name(member: discord.Member) -> str:

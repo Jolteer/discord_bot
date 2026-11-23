@@ -312,7 +312,8 @@ async def verify_csrf(request: Request) -> None:
     if origin and origin != _origin_of(config.public_base_url):
         raise HTTPException(403, "This request came from another website, so it was blocked.")
     ws = await require_session(request)
-    sent = request.headers.get("x-csrf-token")
+    # object, not str: a form field can also hold an uploaded file, which the check below refuses.
+    sent: object = request.headers.get("x-csrf-token")
     if sent is None:
         form = await request.form()  # Starlette caches this, so the route can read it again
         sent = form.get("csrf_token")

@@ -16,7 +16,7 @@ from datetime import datetime
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 
-from ...core.db import Database
+from ...core.db import Database, rows_changed
 from ...core.models import AllianceRequest, PanelMessage
 from ...core.types import utcnow
 from .constants import ACTIVE_STATUSES, MODULE, STATUS_DECIDING, STATUS_PENDING, STATUS_REJECTED
@@ -86,7 +86,7 @@ async def set_message(db: Database, request_id: int, channel_id: int, message_id
             .where(AllianceRequest.id == request_id, AllianceRequest.status == STATUS_PENDING)
             .values(channel_id=channel_id, message_id=message_id)
         )
-        return result.rowcount == 1
+        return rows_changed(result) == 1
 
 
 async def delete_unposted(db: Database, request_id: int) -> None:
@@ -167,7 +167,7 @@ async def claim(db: Database, request_id: int, *, decided_by: int) -> bool:
             .where(AllianceRequest.id == request_id, AllianceRequest.status == STATUS_PENDING)
             .values(status=STATUS_DECIDING, decided_by=decided_by, claimed_at=utcnow())
         )
-        return result.rowcount == 1
+        return rows_changed(result) == 1
 
 
 async def finish(db: Database, request_id: int, *, status: str) -> None:
@@ -206,7 +206,7 @@ async def release_stuck(db: Database) -> int:
             .where(AllianceRequest.status == STATUS_DECIDING)
             .values(status=STATUS_PENDING, decided_by=None, claimed_at=None)
         )
-        return result.rowcount
+        return rows_changed(result)
 
 
 async def decide(
@@ -230,7 +230,7 @@ async def decide(
             .where(AllianceRequest.id == request_id, AllianceRequest.status == STATUS_PENDING)
             .values(status=status, decided_by=decided_by, reason=reason, decided_at=utcnow())
         )
-        return result.rowcount == 1
+        return rows_changed(result) == 1
 
 
 async def get_panel(db: Database, guild_id: int) -> PanelMessage | None:

@@ -27,7 +27,8 @@ def form_version(form: FormData, field: str = "version") -> int:
         The version, or ``NO_VERSION`` if the field is missing or not a number.
     """
     try:
-        return int(form.get(field, str(NO_VERSION)))
+        # The ignore: a file uploaded under this name is not a number. See B7 in docs/refactor/AUDIT.md.
+        return int(form.get(field, str(NO_VERSION)))  # type: ignore[arg-type]
     except ValueError:
         return NO_VERSION
 

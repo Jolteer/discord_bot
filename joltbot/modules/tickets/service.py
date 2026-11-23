@@ -688,7 +688,9 @@ class TicketManager:
         if applicant is not None:
             try:
                 overwrite = channel.overwrites_for(applicant)
-                overwrite.send_messages = False
+                # discord.py sets these permission names on the class at import time, where a
+                # type checker can't see them.
+                overwrite.send_messages = False  # type: ignore[misc]
                 await channel.set_permissions(applicant, overwrite=overwrite, reason="Ticket closing")
             except discord.HTTPException as e:
                 log.debug("Guild %s: couldn't stop the applicant posting in %s: %s", guild.id, channel, e)

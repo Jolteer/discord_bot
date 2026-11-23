@@ -11,10 +11,10 @@ variants but has not been integration-tested yet.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import event
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import CursorResult, Result, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from .models import Base
@@ -33,6 +33,21 @@ def _sqlite_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA busy_timeout=5000")
     cursor.close()
+
+
+def rows_changed(result: Result[Any]) -> int:
+    """How many rows an UPDATE or DELETE touched.
+
+    ``session.execute`` is typed as returning a plain ``Result``, which has no
+    ``rowcount``. For an UPDATE or DELETE it is always a ``CursorResult``, which does.
+
+    Args:
+        result: What ``session.execute`` returned for an UPDATE or DELETE statement.
+
+    Returns:
+        The number of rows the statement matched.
+    """
+    return cast("CursorResult[Any]", result).rowcount
 
 
 class Database:

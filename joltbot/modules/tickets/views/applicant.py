@@ -53,7 +53,7 @@ class ApplicationModal(discord.ui.Modal):
         self.choices: list[dict[str, str]] = list(choices or [])
         self.inputs: list[tuple[str, discord.ui.TextInput]] = []
         for question in settings.form_questions[:MAX_FORM_QUESTIONS]:
-            text_input = discord.ui.TextInput(
+            text_input: discord.ui.TextInput[ApplicationModal] = discord.ui.TextInput(
                 label=question.label[:TEXT_INPUT_LABEL_MAX],
                 placeholder=question.placeholder[:TEXT_INPUT_PLACEHOLDER_MAX] or None,
                 required=question.required,
@@ -96,7 +96,9 @@ class ApplicationModal(discord.ui.Modal):
         )
         await interaction.followup.send(text[:MESSAGE_MAX], ephemeral=True)
 
-    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+    # The ignore: a form's on_error takes no ``item`` (discord.py's own Modal is declared the
+    # same way), while the View class that Modal is built on does.
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:  # type: ignore[override]
         """Log an unexpected failure and ask the applicant to try again."""
         log.exception("Application form failed", exc_info=error)
         await safe_reply(interaction, "Something went wrong submitting your application. Please try again.")
@@ -168,7 +170,7 @@ class ChoiceStepView(discord.ui.View):
                 options.append(
                     discord.SelectOption(label=option.label[:SELECT_OPTION_LABEL_MAX], value=str(i), emoji=emoji)
                 )
-            select = discord.ui.Select(
+            select: discord.ui.Select[ChoiceStepView] = discord.ui.Select(
                 placeholder=(question.label if question.required else f"{question.label} (optional)")[
                     :SELECT_PLACEHOLDER_MAX
                 ],
@@ -177,11 +179,15 @@ class ChoiceStepView(discord.ui.View):
                 options=options,
                 row=number,
             )
-            select.callback = functools.partial(self._picked, number)
+            # Assigning ``callback`` is discord.py's way to give a component built in code its
+            # handler. A type checker sees a method being replaced, hence the ignores here.
+            select.callback = functools.partial(self._picked, number)  # type: ignore[method-assign]
             self.add_item(select)
             self.selects.append(select)
-        self.continue_button = discord.ui.Button(label="Continue", style=discord.ButtonStyle.success, row=CONTINUE_ROW)
-        self.continue_button.callback = self._continue
+        self.continue_button: discord.ui.Button[ChoiceStepView] = discord.ui.Button(
+            label="Continue", style=discord.ButtonStyle.success, row=CONTINUE_ROW
+        )
+        self.continue_button.callback = self._continue  # type: ignore[method-assign]
         self.add_item(self.continue_button)
 
     async def _picked(self, number: int, interaction: discord.Interaction) -> None:
@@ -258,13 +264,13 @@ class PanelView(discord.ui.View):
         # with bot.add_view, its button works on every old panel message, also after a restart.
         super().__init__(timeout=None)
         self.bot = bot
-        button = discord.ui.Button(
+        button: discord.ui.Button[PanelView] = discord.ui.Button(
             label=label[:BUTTON_LABEL_MAX],
             emoji="📝",
             style=discord.ButtonStyle.success,
             custom_id=custom_id(PANEL_ID, legacy),
         )
-        button.callback = self.open_application
+        button.callback = self.open_application  # type: ignore[method-assign]  # see ChoiceStepView
         self.add_item(button)
 
     async def open_application(self, interaction: discord.Interaction) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import discord
 
@@ -88,8 +88,12 @@ class TicketControlView(discord.ui.View):
             (DENY_ID, "Deny", "❌", discord.ButtonStyle.danger, self.deny),
             (CLOSE_ID, "Close", "🔒", discord.ButtonStyle.secondary, self.close),
         ):
-            button = discord.ui.Button(label=label, emoji=emoji, style=style, custom_id=custom_id(new_id, legacy))
-            button.callback = callback
+            button: discord.ui.Button[TicketControlView] = discord.ui.Button(
+                label=label, emoji=emoji, style=style, custom_id=custom_id(new_id, legacy)
+            )
+            # Assigning ``callback`` is discord.py's way to give a button built in code its
+            # handler. A type checker sees a method being replaced, hence the ignore.
+            button.callback = callback  # type: ignore[method-assign]
             self.add_item(button)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -132,7 +136,9 @@ class TicketControlView(discord.ui.View):
             lines.append("Optionally pick an extra role, then press **Confirm accept**.")
         # TODO: ``require_attachment`` only warns; Accept still proceeds. If admins
         # expect a hard block, enforce it here (or rename the setting to match warn-only).
-        if ctx.settings.require_attachment and not await _applicant_uploaded_file(interaction.channel, ticket.user_id):
+        # The cast: these buttons only exist on a message in a ticket's text channel.
+        channel = cast(discord.abc.Messageable, interaction.channel)
+        if ctx.settings.require_attachment and not await _applicant_uploaded_file(channel, ticket.user_id):
             lines.append("⚠️ The applicant hasn't uploaded a file yet.")
         view = AcceptView(self.bot, ticket, ctx.settings)
         view.message = await interaction.followup.send("\n".join(lines), view=view, ephemeral=True, wait=True)
@@ -242,8 +248,10 @@ class AcceptView(_StaffPrompt):
                 )
                 for c in settings.extra_role_choices[:MAX_EXTRA_ROLE_CHOICES]
             ]
-            self.select = discord.ui.Select(placeholder="Extra role (optional)", options=options, row=0)
-            self.select.callback = self._on_select
+            self.select: discord.ui.Select[AcceptView] = discord.ui.Select(
+                placeholder="Extra role (optional)", options=options, row=0
+            )
+            self.select.callback = self._on_select  # type: ignore[method-assign]  # see TicketControlView
             self.add_item(self.select)
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
@@ -284,7 +292,7 @@ class DenyReasonModal(discord.ui.Modal, title="Deny application"):
         hint: Grey hint text for the reason box, from the server's settings.
     """
 
-    reason = discord.ui.TextInput(
+    reason: discord.ui.TextInput[DenyReasonModal] = discord.ui.TextInput(
         label="Reason (sent to the applicant)", style=discord.TextStyle.paragraph, max_length=DENY_REASON_MAX
     )
 
