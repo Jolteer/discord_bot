@@ -229,9 +229,9 @@ No role, channel or guild is looked up by a hardcoded name either.
 
 `RequireGuild` is `web/security.py:223`: logged in, a member of that server according to Discord, and either a manager (owner, Administrator, Manage Server) or the holder of a dashboard access role checked live against Discord. If Discord cannot be asked, the answer is 503, never a guess (`:257-263`).
 
-### 3.9 Mod log (uncommitted work on `feat/modlog`, not live)
+### 3.9 Mod log (added after the audit)
 
-Not part of the audited commit. Listed so the plan can account for it.
+Not part of the audited commit. It was uncommitted work on `feat/modlog` when this audit was written, and was merged into `main` on 2026-11-23, after Phase 2. It is inert until it has a dashboard page: no server can switch it on.
 
 - Adds 22 listeners in `modules/modlog/cog.py`, no commands, no components, one table (`modlog_entries`, migration `0003`).
 - Adds a third handler for `on_raw_member_remove`, and second handlers for `on_member_join`, `on_guild_channel_delete` and `on_guild_update`.

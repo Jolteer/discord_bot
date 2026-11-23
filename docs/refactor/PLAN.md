@@ -150,7 +150,7 @@ Per-guild config needs no work. This slot goes to the brief's second goal: a new
 
 Step 4a is the one with a hard gate: after the move, `alembic revision --autogenerate` must produce no operations and `tests/test_migrations.py` must pass. If either fails, the step is reverted, not patched.
 
-Step 4c must produce exactly today's permission value, `2251800082377746`. A test pins the number.
+Step 4c must produce exactly today's permission value, `2251800082377874` (it grew by View Audit Log when mod log merged). `tests/test_permissions.py` pins the number.
 
 Risk: medium. Wide but shallow: many import lines, no logic. See decision 2 about doing this after mod log merges.
 
@@ -218,7 +218,8 @@ Phases 5 and 6 can swap with Phase 4 if mod log takes longer, since neither depe
 | 1 Safety net | Done, 2026-11-23 | `736e4a9`, `af167e7` | Test gaps T1, T2, T3, T5, T6, T7. New bug B7 recorded |
 | 2 Config and secrets | Done, 2026-11-23 | `d0c2526` | S1, B5, D10, and the font hosts in S7 |
 | 3 Layering | Not started | | |
-| 4 Module seam | Not started; waits for mod log to merge | | |
+| Mod log merged to `main` | Done, 2026-11-23. Bot side only; not deployed | see `git log` | Phase 4 is unblocked |
+| 4 Module seam | Not started | | |
 | 5 Reliability | Not started | | |
 | 6 Docs and CI | Not started | | |
 | 7 Deployment | Nothing planned | | |

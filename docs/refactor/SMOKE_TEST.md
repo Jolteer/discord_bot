@@ -1,35 +1,27 @@
 # Smoke test
 
-A manual pass through everything JoltBot does on Discord and on the dashboard, to run in the test server after each refactor phase. It is built from the behavior inventory in [AUDIT.md](AUDIT.md), section 3. The automated tests cover the rules; this covers what only a real Discord connection shows.
+A manual pass through everything JoltBot does on Discord and on the dashboard. It is built from the behavior inventory in [AUDIT.md](AUDIT.md), section 3. The automated tests cover the rules; this covers what only a real Discord connection shows.
 
-Run it with the **JoltBot Test** application in the **Jolteers** server. Never with the live token.
+**Where to run it**
 
-**How much to run**
+There is no test bot at the moment (the JoltBot Test application was deleted on 2026-11-23), so this is run on the live server, right after a deploy:
 
-- A phase that only touched tests, tooling or docs: sections 1 and 2.
-- A phase that touched code under `joltbot/`: everything.
+- Always: sections 1 and 2. They only open prompts and cancel them, so nothing changes for anyone.
+- After a deploy that changed code on the ticket or alliance paths: also sections 4 to 7, with your own second account as the applicant, in a server where that is harmless.
 
-## 0. Setup (once)
+Never start a bot on your PC with the live token: it would be a second copy of the live bot, answering real members.
 
-The refactor branch lives in its own folder, `d:\Projects\discord_bot-refactor`, and needs its own database: the main checkout's `data/joltbot.db` has been migrated for mod log, and this branch refuses to start on a database from a newer version.
+## 0. Setup
 
-Already done for you in that folder:
+On the live server there is nothing to set up. For section 1, read the logs on the server:
 
-- `.env` copied from the main checkout.
-- `data/joltbot.db` copied from `data/joltbot.before-0003.bak.db` and migrated to this branch's version. It holds the test server's ticket settings as they were then. Alliances are not set up in it.
-
-Still to do:
-
-1. Check that `DISCORD_TOKEN` in `.env` is the current JoltBot Test token. On 2026-11-23 Discord answered 401 for the one in the file, so it needs replacing with a fresh token from the Developer Portal (Bot → Reset Token).
-2. Stop any bot running from the main checkout. Two bots on one token both answer every click.
-3. You need a second Discord account with the staff role for section 5.
-
-Start both processes from `d:\Projects\discord_bot-refactor`, each in its own terminal:
-
-```powershell
-..\discord_bot\.venv\Scripts\python -m joltbot.bot
-..\discord_bot\.venv\Scripts\python -m joltbot.web
+```bash
+ssh ubuntu@18.221.166.235 "cd ~/joltbot && docker compose ps && docker compose logs --since 15m bot"
 ```
+
+The health pages are `https://joltbot.jolteer.com/health` and `/health/bot`.
+
+If a test application exists again, run everything there first instead: put its token, client ID and client secret in `.env`, run `alembic upgrade head`, and start `python -m joltbot.bot` and `python -m joltbot.web` in two terminals. Section 5 needs a second account with the staff role.
 
 ## 1. Startup
 
@@ -37,8 +29,8 @@ Start both processes from `d:\Projects\discord_bot-refactor`, each in its own te
 |---|---|---|
 | 1.1 | Read the bot's first log lines | No traceback. No "failed to load" line for any module |
 | 1.2 | Look for the slash-command line | "Slash commands unchanged; not re-registering", or "Registered 2 global slash command(s)" on the first start with a new database. Any other count means the command list changed |
-| 1.3 | Open `http://localhost:8000/health` and `/health/bot` | Both answer `200`. `/health/bot` can take up to a minute after the bot connects |
-| 1.4 | Press Ctrl+C in the bot terminal, then start it again | It stops without a traceback and starts cleanly |
+| 1.3 | Open the two health pages | Both answer `200`. `/health/bot` can take up to a minute after the bot connects |
+| 1.4 | `docker compose ps` | `bot` and `web` are `healthy` (the bot about two minutes after it connects) |
 
 ## 2. Old messages still work
 

@@ -78,8 +78,11 @@ module's cog; the dashboard mounts each module's FastAPI router.
 - `cog` / `web` — optional dotted paths loaded only by the matching process
 
 Current modules: **general** (embed colour + module toggles), **tickets**
-(verification flow) and **alliances** (join requests decided by each alliance's
-own leadership).
+(verification flow), **alliances** (join requests decided by each alliance's
+own leadership) and **modlog** (records joins, edits, deletes, bans and server
+changes in log channels). The mod log is bot-only so far: it has no dashboard
+page yet, and it needs a log channel before it can be switched on, so no server
+can enable it until that page exists.
 
 Adding a module: create `joltbot/modules/<name>/` with `settings.py`, optional
 `cog.py` / `web.py` / `templates/`, then one `ModuleInfo` entry. No other
@@ -239,6 +242,7 @@ Key rules (see `modules/alliances/service.py` and `store.py`):
 | `module_settings` | Per-guild JSON config + `enabled` + optimistic `version` |
 | `tickets` | Application lifecycle |
 | `alliance_requests` | Alliance join requests and their decisions |
+| `modlog_entries` | What the mod log recorded: event, who did it, to whom, details |
 | `panel_messages` | Last posted panel message per module |
 | `audit_log` | Who changed settings |
 | `guild_issues` | Bot problems with no interaction to reply on |
