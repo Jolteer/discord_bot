@@ -19,7 +19,7 @@ import time
 import discord
 
 from ..core.alerts import AlertError, post_to_webhook
-from ..core.config import get_config
+from ..core.config import AppConfig, get_config
 from ..core.db import Database
 from ..core.logsetup import setup_logging
 from ..core.schema import schema_problem
@@ -75,18 +75,21 @@ def close_on_sigterm(bot: JoltBot) -> None:
         log.debug("No SIGTERM handler installed: %r", e)
 
 
-async def run_once() -> None:
+async def run_once(config: AppConfig) -> None:
     """Run the bot until it disconnects cleanly or raises.
+
+    Args:
+        config: The settings ``main`` loaded and checked.
 
     Raises:
         discord.LoginFailure: Invalid token.
         discord.PrivilegedIntentsRequired: Portal intents not enabled.
         Exception: Other startup/runtime failures (caller may retry).
     """
-    bot = JoltBot(get_config())
+    bot = JoltBot(config)
     async with bot:
         close_on_sigterm(bot)
-        await bot.start(get_config().discord_token)
+        await bot.start(config.discord_token)
 
 
 def send_test_alert(url: str) -> int:
@@ -113,18 +116,21 @@ def send_test_alert(url: str) -> int:
     return 0
 
 
-def run_forever() -> None:
+def run_forever(config: AppConfig) -> None:
     """Run the bot, starting it again after any error a retry might fix.
 
     Returns when the bot shut down cleanly (SIGTERM or Ctrl+C). Exits the
     process with ``EXIT_BAD_TOKEN`` or ``EXIT_BAD_SETUP`` for the two problems
     that retrying can't fix.
+
+    Args:
+        config: The settings ``main`` loaded and checked; used for every start.
     """
     delay = RETRY_FIRST_SECONDS
     while True:
         started = time.monotonic()
         try:
-            asyncio.run(run_once())
+            asyncio.run(run_once(config))
             return  # clean shutdown
         except KeyboardInterrupt:
             return
@@ -171,7 +177,7 @@ def main() -> None:
     if problem := asyncio.run(check_database(config.database_url)):
         log.critical(problem)
         sys.exit(EXIT_BAD_SETUP)
-    run_forever()
+    run_forever(config)
 
 
 if __name__ == "__main__":

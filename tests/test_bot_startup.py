@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from joltbot.bot import __main__ as bot_main
 from joltbot.bot import client as client_module
 from joltbot.bot.__main__ import close_on_sigterm
 from joltbot.bot.client import JoltBot
@@ -62,6 +63,37 @@ async def test_closing_the_bot_stops_its_background_work(db):
     await asyncio.sleep(0)
     assert sync_task.cancelled()
     assert bot.is_closed()
+
+
+async def test_the_bot_starts_with_the_settings_it_was_given(monkeypatch):
+    started = []
+
+    class RecordingBot:
+        def __init__(self, config):
+            self.config = config
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def start(self, token):
+            started.append((self.config, token))
+
+        async def close(self):
+            return None
+
+    def not_the_global_settings():
+        raise AssertionError("run_once must use the settings it was given")
+
+    monkeypatch.setattr(bot_main, "JoltBot", RecordingBot)
+    monkeypatch.setattr(bot_main, "get_config", not_the_global_settings)
+    config = AppConfig(_env_file=None, discord_token="the-token-from-main")
+    await bot_main.run_once(config)
+    assert started == [(config, "the-token-from-main")]
+    if sys.platform != "win32":
+        asyncio.get_running_loop().remove_signal_handler(signal.SIGTERM)
 
 
 async def test_sigterm_handler_never_breaks_startup():

@@ -24,6 +24,7 @@ from ..modules.registry import MODULES
 from .rendering import STATIC_DIR, css_built, render
 from .routes import auth, guild, health, pages
 from .security import LoginRequired
+from .sessions import purge_expired_forever
 from .watchdog import BotWatchdog
 
 log = logging.getLogger(__name__)
@@ -48,13 +49,13 @@ def content_security_policy(allow_cdn: bool) -> str:
         CSP header string applied by middleware on every response.
     """
     scripts = f"'self' {TAILWIND_CDN}" if allow_cdn else "'self'"
-    # fonts.googleapis.com serves the CSS; fonts.gstatic.com serves the font files.
-    styles = "'self' 'unsafe-inline' https://fonts.googleapis.com"
     return (
         "default-src 'self'; "
         f"script-src {scripts}; "
-        f"style-src {styles}; "
-        "font-src 'self' https://fonts.gstatic.com; "
+        # 'unsafe-inline': templates set a few colours with style="..." attributes.
+        "style-src 'self' 'unsafe-inline'; "
+        # Both fonts are served from /static/fonts, so no font host is allowed.
+        "font-src 'self'; "
         "img-src 'self' data: https://cdn.discordapp.com; "
         "connect-src 'self'; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
@@ -105,10 +106,13 @@ def create_app(
         log.info("Dashboard ready at %s", config.public_base_url)
         # Raises the alarm (one ERROR log line) when the bot stops reporting in.
         watchdog = asyncio.create_task(BotWatchdog(db).run())
+        # Deletes login sessions whose time is up, now and then once an hour.
+        session_purge = asyncio.create_task(purge_expired_forever(db))
         yield
-        watchdog.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await watchdog
+        for task in (watchdog, session_purge):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         await discord.aclose()
         await db.dispose()
 

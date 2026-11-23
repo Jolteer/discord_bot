@@ -67,7 +67,10 @@ class Database:
         if parsed.get_backend_name() == "sqlite" and parsed.database not in (None, "", ":memory:"):
             Path(parsed.database).parent.mkdir(parents=True, exist_ok=True)
 
-        self.engine: AsyncEngine = create_async_engine(url)
+        # hide_parameters: without it, the text of every database error includes the values of
+        # the statement that failed. For a failed login that is the user's Discord access
+        # token, and error text goes to the log file and to the operator's alert webhook.
+        self.engine: AsyncEngine = create_async_engine(url, hide_parameters=True)
         if parsed.get_backend_name() == "sqlite":
             event.listen(self.engine.sync_engine, "connect", _sqlite_pragmas)
 

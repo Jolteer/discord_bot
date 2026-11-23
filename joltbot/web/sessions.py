@@ -8,20 +8,25 @@ session everywhere immediately.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
+import logging
 import secrets
 from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import delete
 
-from ..core.db import Database
+from ..core.db import Database, rows_changed
 from ..core.discord_rest import DiscordClient, DiscordError, DiscordUnauthorized
 from ..core.models import WebSession
 from ..core.types import utcnow
 
+log = logging.getLogger(__name__)
+
 SESSION_LIFETIME = timedelta(days=7)
+PURGE_EVERY_SECONDS = 3600  # how often expired sessions are deleted while the dashboard runs
 # How long we trust the user's cached server list (and their permissions in it).
 # If someone loses Manage Server, they keep dashboard access for at most this long.
 GUILD_LIST_MAX_AGE = timedelta(minutes=5)
@@ -85,6 +90,43 @@ async def create_session(
             )
         )
     return raw
+
+
+async def purge_expired(db: Database) -> int:
+    """Delete every session whose time is up.
+
+    An expired session can no longer log anyone in, but its row still holds a
+    Discord access token until it is deleted.
+
+    Args:
+        db: Shared database.
+
+    Returns:
+        How many sessions were deleted.
+    """
+    async with db.session() as session, session.begin():
+        result = await session.execute(delete(WebSession).where(WebSession.expires_at < utcnow()))
+    return rows_changed(result)
+
+
+async def purge_expired_forever(db: Database) -> None:
+    """Delete expired sessions when the dashboard starts, then once an hour. Cancel the task to stop it.
+
+    Logging in also removes them (``create_session``), but on a server where
+    people log in rarely that could leave expired rows lying for weeks.
+
+    Args:
+        db: Shared database.
+    """
+    while True:
+        try:
+            removed = await purge_expired(db)
+            if removed:
+                log.info("Removed %d expired login session(s)", removed)
+        except Exception:
+            # e.g. the database is busy. Nothing is lost: the next round tries again.
+            log.warning("Couldn't remove expired login sessions", exc_info=True)
+        await asyncio.sleep(PURGE_EVERY_SECONDS)
 
 
 async def load_session(db: Database, secret: str, raw_token: str | None) -> WebSession | None:

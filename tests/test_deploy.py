@@ -56,6 +56,17 @@ async def test_cdn_allowed_only_until_css_is_built(db, monkeypatch, built):
     assert (TAILWIND_CDN in csp) is (not built)
 
 
+def test_the_live_site_loads_scripts_styles_and_fonts_only_from_itself():
+    policy = dict(part.strip().split(" ", 1) for part in app_module.content_security_policy(allow_cdn=False).split(";"))
+    assert policy["script-src"] == "'self'"
+    assert policy["style-src"] == "'self' 'unsafe-inline'"
+    assert policy["font-src"] == "'self'"  # both fonts are in /static/fonts
+    # The only other site anything is loaded from: Discord's, for avatars and server icons.
+    assert [word for words in policy.values() for word in words.split() if word.startswith("http")] == [
+        "https://cdn.discordapp.com"
+    ]
+
+
 # ------------------------------------------------------------------ settings from env vars
 
 
