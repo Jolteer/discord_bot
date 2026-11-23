@@ -58,6 +58,9 @@ module's cog; the dashboard mounts each module's FastAPI router.
    daily 30-day purge of left guilds.
 6. Tickets cog registers **persistent views**, starts the 5-minute recovery loop,
    and optionally sweeps pending roles once at first ready.
+7. Mod log cog creates its manager (audit buffer, channel queues) and starts the
+   cleanup: at first ready and then every 24 hours it deletes each server's
+   entries older than that server's `retention_days`, whether logging is on or off.
 
 ## Dashboard startup flow
 
@@ -81,8 +84,7 @@ Current modules: **general** (embed colour + module toggles), **tickets**
 (verification flow), **alliances** (join requests decided by each alliance's
 own leadership) and **modlog** (records joins, edits, deletes, bans and server
 changes in log channels; its dashboard page is called Logging). The mod log
-still lacks the cleanup that `retention_days` describes, so its entries are
-kept until that exists, and it has no slash commands yet.
+has no slash commands yet.
 
 Adding a module: create `joltbot/modules/<name>/` with `settings.py`, optional
 `cog.py` / `web.py` / `templates/`, then one `ModuleInfo` entry. No other

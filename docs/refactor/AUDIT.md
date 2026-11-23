@@ -237,8 +237,9 @@ Not part of the audited commit. It was uncommitted work on `feat/modlog` when th
 - Adds a third handler for `on_raw_member_remove`, and second handlers for `on_member_join`, `on_guild_channel_delete` and `on_guild_update`.
 - Adds View Audit Log to the bot's invite permissions, so the invite value changes and servers already using JoltBot must grant it by hand.
 - Raises discord.py's message cache from 1000 to 5000 messages.
-- Still open:
-  - `retention_days` describes a daily cleanup (`modlog/settings.py:33`), but nothing deletes `modlog_entries` rows. The setting is not on the dashboard page for that reason.
+- Adds one background task: the retention cleanup (`modlog/cog.py`, `cleanup`). At first ready and then every 24 h it deletes, per server, `modlog_entries` rows older than that server's `retention_days`, whether logging is on or off, 500 rows per transaction (`modlog/store.py`, `modlog/retention.py`). Done 2026-11-23; before that nothing deleted these rows.
+- The Logging page shows `retention_days` as "Keep entries for (days)", 1 to 365.
+- Still open: no slash commands yet (a feature still to be designed).
 
 ## 4. The brief's goals against the code
 

@@ -219,7 +219,8 @@ Phases 5 and 6 can swap with Phase 4 if mod log takes longer, since neither depe
 | 2 Config and secrets | Done, 2026-11-23 | `d0c2526` | S1, B5, D10, and the font hosts in S7 |
 | 3 Layering | Not started | | |
 | Mod log merged to `main` | Done, 2026-11-23. Not deployed | see `git log` | Phase 4 is unblocked |
-| Mod log dashboard page | Done, 2026-11-23. Retention cleanup and slash commands still to come | see `git log` | n/a |
+| Mod log dashboard page | Done, 2026-11-23. Slash commands still to come | see `git log` | n/a |
+| Mod log retention cleanup | Done, 2026-11-23, on `feat/modlog`. Not merged, not deployed | `bde05dd`, `97a5fa3` | The open item in AUDIT.md 3.9 |
 | 4 Module seam | Not started | | |
 | 5 Reliability | Not started | | |
 | 6 Docs and CI | Not started | | |

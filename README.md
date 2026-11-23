@@ -340,6 +340,7 @@ These are not configurable. Each is a named constant in the file shown, if you e
 | Wait before the bot restarts itself after a crash | 10 seconds, doubling up to 5 minutes | `bot/__main__.py` |
 | Alerts to the webhook | the same error at most once per 10 minutes; at most 10 alerts per 10 minutes | `core/alerts.py` |
 | Data of a server JoltBot left | deleted after 30 days | `core/guilds.py` |
+| Mod log entries older than the server's retention period | deleted when the bot starts, then every 24 hours, 500 rows at a time | `modules/modlog/cog.py`, `modules/modlog/store.py` |
 | Dashboard login | lasts 7 days | `web/sessions.py` |
 | A user's server list and permissions | re-checked every 5 minutes; reused for up to 30 minutes if Discord is down | `web/sessions.py` |
 | A server's roles, channels and a member's roles | cached for 60 seconds | `core/discord_rest.py` |
@@ -516,7 +517,7 @@ Things to know:
 - Voice events and avatar changes are off until you tick them: they are a lot of posts.
 - The ignore lists (bots, roles, channels, members) apply to member, message and voice events only. Bans, kicks, timeouts and server changes are always recorded, so nobody can hide their own by adding themself to a list.
 - JoltBot can show the text of an edited or deleted message only while that message is among the last few thousand it has seen since it started. For older messages the entry says what happened, without the text.
-- Entries are also saved in the database. Nothing deletes old entries yet.
+- Entries are also saved in JoltBot's database, including the text of deleted messages. They are deleted once they are older than **Keep entries for** (History section, 30 days unless you change it). The cleanup runs when the bot starts and then once a day, also while logging is switched off. Posts already in your log channels are not touched.
 
 ### Letting moderators use the dashboard
 
@@ -607,6 +608,7 @@ The same rules about roles and channels apply as for tickets. An alliance's memb
 | Ignored roles | `ignored_role_ids` | none | Up to 50. Events about members holding one are not recorded |
 | Ignored channels | `ignored_channel_ids` | none | Up to 50 channels or categories. Message events there are not recorded. The log channels themselves are always left out |
 | Ignored members | `ignored_user_ids` | none | Up to 50 user IDs |
+| Keep entries for (days) | `retention_days` | 30 | 1 to 365. Older entries are deleted from the database once a day. Log channel posts are not touched |
 
 A group without a channel records nothing. The ignore lists never apply to moderation and server events. Every channel and role must belong to this server.
 
