@@ -6,6 +6,7 @@ from joltbot.core.permissions import (
     ADMINISTRATOR,
     BOT_PERMISSIONS_VALUE,
     MANAGE_GUILD,
+    VIEW_AUDIT_LOG,
     bot_invite_url,
     can_manage_guild,
 )
@@ -34,8 +35,8 @@ def test_garbage_permissions_are_denied():
     assert not can_manage_guild("not-a-number")
 
 
-def test_invite_permissions_match_the_old_bot():
-    assert BOT_PERMISSIONS_VALUE == 2251800082377746
+def test_invite_permissions_are_the_old_bots_plus_view_audit_log():
+    assert BOT_PERMISSIONS_VALUE == 2251800082377746 | VIEW_AUDIT_LOG == 2251800082377874
     assert not BOT_PERMISSIONS_VALUE & ADMINISTRATOR
 
 

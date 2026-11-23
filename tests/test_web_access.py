@@ -484,6 +484,7 @@ async def test_general_page_toggles_modules(db, alice):
             "version_general": "1",
             "version_tickets": "1",
             "version_alliances": "1",
+            "version_modlog": "1",
         },
     )
     assert r.status_code == 400 and "isn't set up" in html.unescape(r.text)
@@ -495,6 +496,7 @@ async def test_general_page_toggles_modules(db, alice):
             "version_general": "1",
             "version_tickets": "1",
             "version_alliances": "1",
+            "version_modlog": "1",
         },
     )
     assert r.status_code == 303
@@ -531,6 +533,7 @@ def _general_form(csrf, **fields):
         "version_general": "1",
         "version_tickets": "1",
         "version_alliances": "1",
+        "version_modlog": "1",
         **fields,
     }
 
@@ -779,6 +782,7 @@ async def test_a_module_without_a_page_can_be_switched_on_under_general(db, alic
         "version_general": "1",
         "version_tickets": "1",
         "version_alliances": "1",
+        "version_modlog": "1",
         "version_hello": "0",
     }
     assert (await alice.post(f"/servers/{GUILD_A}/general", data=form)).status_code == 303

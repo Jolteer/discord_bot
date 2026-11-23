@@ -15,6 +15,8 @@ from .alliances.settings import AllianceSettings
 from .base import ModuleSettingsModel
 from .general.settings import MODULE as GENERAL
 from .general.settings import GeneralSettings
+from .modlog.constants import MODULE as MODLOG
+from .modlog.settings import ModLogSettings
 from .tickets.constants import MODULE as TICKETS
 from .tickets.settings import TicketSettings
 
@@ -68,6 +70,13 @@ MODULES: dict[str, ModuleInfo] = {
             settings_model=AllianceSettings,
             cog="joltbot.modules.alliances.cog",
             web="joltbot.modules.alliances.web",
+        ),
+        ModuleInfo(
+            name=MODLOG,
+            title="Logging",
+            description="Records joins, edits, deletes, bans and server changes in log channels, with who did it.",
+            settings_model=ModLogSettings,
+            cog="joltbot.modules.modlog.cog",
         ),
     )
 }

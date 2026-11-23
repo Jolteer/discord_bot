@@ -259,7 +259,7 @@ Open <https://discord.com/developers/applications> and create an application, or
 The dashboard builds invite links for you. The general one looks like this:
 
 ```
-https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot+applications.commands&permissions=2251800082377746
+https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot+applications.commands&permissions=2251800082377874
 ```
 
 | Permission | Why |
@@ -271,6 +271,7 @@ https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot+applicat
 | Manage Messages | Moderate inside tickets |
 | Pin Messages | Pin the application panel |
 | Kick Members | Only for "Deny and kick" |
+| View Audit Log | Lets the mod log say who did something. Read-only. Servers that added JoltBot before this was in the invite link must give it to JoltBot's role by hand. |
 | Mention All Roles | Lets the new-ticket ping notify staff roles that aren't set to mentionable. JoltBot never pings @everyone. |
 
 JoltBot deliberately does **not** ask for Administrator.

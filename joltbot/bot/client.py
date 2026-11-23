@@ -24,6 +24,7 @@ from .interactions import safe_reply
 
 if TYPE_CHECKING:
     from ..modules.alliances.service import AllianceManager
+    from ..modules.modlog.service import ModLogManager
     from ..modules.tickets.service import TicketManager
 
 log = logging.getLogger(__name__)
@@ -36,6 +37,11 @@ NOTICE_FOOTER = "\n\nThis is also shown on the JoltBot dashboard and clears itse
 # Registering slash commands is retried with a doubling wait, from the first value up to the second.
 SYNC_RETRY_FIRST_SECONDS = 30
 SYNC_RETRY_MAX_SECONDS = 900
+
+# How many recent messages discord.py keeps in memory, across all servers (its default is
+# 1000). The mod log can only show the text of an edited or deleted message that is still
+# in this cache; nothing is written to the database until a message is edited or deleted.
+MESSAGE_CACHE_SIZE = 5000
 
 
 class Tree(app_commands.CommandTree):
@@ -70,12 +76,14 @@ class JoltBot(commands.Bot):
         failed_modules: Names of modules whose cog failed to load at startup.
         tickets: Set by the tickets cog on load; ticket lifecycle entry point.
         alliances: Set by the alliances cog on load; alliance join request entry point.
+        modlog: Set by the mod log cog on load; records server events.
         config: Shared ``AppConfig``.
         db: Shared ``Database`` for this process.
     """
 
     tickets: TicketManager  # set by the tickets cog when it loads
     alliances: AllianceManager  # set by the alliances cog when it loads
+    modlog: ModLogManager  # set by the mod log cog when it loads
 
     def __init__(self, config: AppConfig) -> None:
         """Set up the intents, the command tree and the database.
@@ -84,7 +92,13 @@ class JoltBot(commands.Bot):
         """
         intents = discord.Intents.default()
         intents.members = True  # PRIVILEGED: join/leave events + member cache
-        intents.message_content = True  # PRIVILEGED: needed to read messages for transcripts
+        intents.message_content = True  # PRIVILEGED: transcripts, and the text of edited/deleted messages
+        # Not privileged, and already part of Intents.default(). Written out because the mod
+        # log stops working without them: moderation = audit log entries and bans,
+        # voice_states = voice joins/leaves/moves, guilds = role and channel changes.
+        intents.moderation = True
+        intents.voice_states = True
+        intents.guilds = True
         super().__init__(
             command_prefix=commands.when_mentioned,  # required by discord.py; JoltBot has slash commands only
             intents=intents,
@@ -95,6 +109,7 @@ class JoltBot(commands.Bot):
             # ticket module looks members up by ID, and grant-existing walks guild.members.
             member_cache_flags=discord.MemberCacheFlags.all(),
             chunk_guilds_at_startup=True,
+            max_messages=MESSAGE_CACHE_SIZE,
         )
         self.config = config
         self.db = Database(config.database_url)

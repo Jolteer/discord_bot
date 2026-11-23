@@ -120,6 +120,9 @@ class FakeGuild:
     def get_channel(self, channel_id: int) -> Any:
         return self._channels.get(channel_id)
 
+    def get_channel_or_thread(self, channel_id: int) -> Any:
+        return self._channels.get(channel_id)
+
     def get_member(self, user_id: int) -> Any:
         return self._members.get(user_id)
 
@@ -164,6 +167,9 @@ def fake_member(
     member.created_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
     member.joined_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
     member.display_avatar.url = "https://cdn.discordapp.com/embed/avatars/0.png"
+    member.nick = None
+    member.timed_out_until = None
+    member.guild_avatar = None
     member.guild_permissions = discord.Permissions(administrator=administrator, manage_guild=manage_guild)
     member.__str__.return_value = name
 
@@ -322,6 +328,8 @@ class FakeBot:
     def __init__(self, db: Any, guilds: Any) -> None:
         self.db = db
         self._guilds = {g.id: g for g in guilds}
+        self.user = SimpleNamespace(id=BOT_USER_ID)
+        self.users: dict[int, Any] = {}  # users Discord knows who are in none of the fake servers
         self.issues: list[tuple[int, str]] = []
         self.resolved: list[tuple[int, str]] = []
 
@@ -331,6 +339,14 @@ class FakeBot:
 
     def get_guild(self, guild_id: int) -> Any:
         return self._guilds.get(guild_id)
+
+    def get_user(self, user_id: int) -> Any:
+        return None  # nobody outside the fake servers is cached
+
+    async def fetch_user(self, user_id: int) -> Any:
+        if user_id not in self.users:
+            raise http_error(discord.NotFound, 404)
+        return self.users[user_id]
 
     async def report_issue(self, guild_id: int, key: str, message: str) -> None:
         self.issues.append((guild_id, key))

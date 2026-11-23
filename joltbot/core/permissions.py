@@ -13,6 +13,7 @@ BAN_MEMBERS = 1 << 2
 ADMINISTRATOR = 1 << 3
 MANAGE_CHANNELS = 1 << 4
 MANAGE_GUILD = 1 << 5  # shown as "Manage Server" in the Discord app
+VIEW_AUDIT_LOG = 1 << 7
 VIEW_CHANNEL = 1 << 10
 SEND_MESSAGES = 1 << 11
 MANAGE_MESSAGES = 1 << 13
@@ -32,11 +33,12 @@ PIN_MESSAGES = 1 << 51
 # Where both the bot invite and the dashboard login send the browser.
 DISCORD_AUTHORIZE_URL = "https://discord.com/oauth2/authorize"
 
-# What JoltBot asks for in its invite link. Same set the old bot used; nothing
-# more, and deliberately NOT Administrator.
+# What JoltBot asks for in its invite link. The set the old bot used plus View Audit
+# Log, and deliberately NOT Administrator.
 BOT_PERMISSIONS = {
     "Kick Members": KICK_MEMBERS,  # only for Deny -> Kick
     "Manage Channels": MANAGE_CHANNELS,  # create/delete ticket channels
+    "View Audit Log": VIEW_AUDIT_LOG,  # the mod log's "who did it"; read-only
     "View Channels": VIEW_CHANNEL,
     "Send Messages": SEND_MESSAGES,
     "Manage Messages": MANAGE_MESSAGES,
@@ -47,7 +49,7 @@ BOT_PERMISSIONS = {
     "Manage Roles": MANAGE_ROLES,  # assign roles; set private permissions on each ticket
     "Pin Messages": PIN_MESSAGES,  # pin the application panel
 }
-BOT_PERMISSIONS_VALUE = sum(BOT_PERMISSIONS.values())  # = 2251800082377746
+BOT_PERMISSIONS_VALUE = sum(BOT_PERMISSIONS.values())  # = 2251800082377874
 
 
 # Permissions that let a member moderate or reconfigure a server. A role carrying any

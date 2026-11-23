@@ -235,6 +235,39 @@ class AuditLog(Base):
     __table_args__ = (Index("ix_audit_log_guild_created", "guild_id", "created_at"),)
 
 
+class ModLogEntry(Base):
+    """One recorded server event: what happened, to whom, and who did it (see modules/modlog).
+
+    Not to be confused with ``AuditLog`` above, which records changes to JoltBot's
+    own settings. Entries are deleted once older than the server's retention
+    period, because ``details`` can hold the text of deleted messages.
+    """
+
+    __tablename__ = "modlog_entries"
+
+    id: Mapped[int] = mapped_column(AutoId, primary_key=True, autoincrement=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, _guild_fk())
+    event_type: Mapped[str] = mapped_column(String(32))  # a key of modlog.constants.EVENTS
+    category: Mapped[str] = mapped_column(String(16))  # members | messages | moderation | server | voice
+    actor_id: Mapped[int | None] = mapped_column(BigInteger)  # who did it, when the audit log said
+    target_id: Mapped[int | None] = mapped_column(BigInteger)  # the member, role or channel it happened to
+    channel_id: Mapped[int | None] = mapped_column(BigInteger)
+    # Old/new values, names at the time, message text, attachments. See modlog.events.LogEvent.details().
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    # Every search is "one server, newest first", optionally narrowed by one column,
+    # so each index starts with guild_id and ends with id (the paging order).
+    __table_args__ = (
+        Index("ix_modlog_entries_guild_id_id", "guild_id", "id"),
+        Index("ix_modlog_entries_guild_created", "guild_id", "created_at"),  # date filters and retention
+        Index("ix_modlog_entries_guild_actor", "guild_id", "actor_id", "id"),
+        Index("ix_modlog_entries_guild_target", "guild_id", "target_id", "id"),
+        Index("ix_modlog_entries_guild_event", "guild_id", "event_type", "id"),
+    )
+
+
 class GuildIssue(Base):
     """A problem the bot hit with nobody to tell (e.g. it couldn't give a role
     when someone joined). Shown as a warning on the dashboard."""
