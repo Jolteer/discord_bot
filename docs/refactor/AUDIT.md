@@ -231,15 +231,14 @@ No role, channel or guild is looked up by a hardcoded name either.
 
 ### 3.9 Mod log (added after the audit)
 
-Not part of the audited commit. It was uncommitted work on `feat/modlog` when this audit was written, and was merged into `main` on 2026-11-23, after Phase 2. It is inert until it has a dashboard page: no server can switch it on.
+Not part of the audited commit. It was uncommitted work on `feat/modlog` when this audit was written, and was merged into `main` on 2026-11-23, after Phase 2. Its dashboard page (Logging, `/servers/{guild_id}/modlog`, GET and POST with the same login, server and CSRF checks as the other settings pages) was added the same day.
 
 - Adds 22 listeners in `modules/modlog/cog.py`, no commands, no components, one table (`modlog_entries`, migration `0003`).
 - Adds a third handler for `on_raw_member_remove`, and second handlers for `on_member_join`, `on_guild_channel_delete` and `on_guild_update`.
 - Adds View Audit Log to the bot's invite permissions, so the invite value changes and servers already using JoltBot must grant it by hand.
 - Raises discord.py's message cache from 1000 to 5000 messages.
-- Notes for when it lands (these are in-progress gaps, not bugs in live code):
-  - `retention_days` describes a daily cleanup (`modlog/settings.py:33`), but nothing deletes `modlog_entries` rows.
-  - The module has no dashboard page, while `setup_problems` requires a log channel before it can be switched on.
+- Still open:
+  - `retention_days` describes a daily cleanup (`modlog/settings.py:33`), but nothing deletes `modlog_entries` rows. The setting is not on the dashboard page for that reason.
 
 ## 4. The brief's goals against the code
 

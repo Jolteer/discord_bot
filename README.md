@@ -31,6 +31,10 @@ JoltBot runs as **two processes** that share one SQLite database:
   2. The request is posted in that alliance's own request channel
   3. Only that alliance's reviewer roles (for example its R5 and R4), or an override role, can **Accept** or **Reject**
   4. Accepting gives that alliance's member role and removes any other alliance's, so nobody holds two
+- **Logging (mod log)**
+  1. Records joins and leaves, bans, kicks and timeouts, edited and deleted messages, role, channel and server changes, and voice activity
+  2. Each group posts in its own log channel, and says who did it where Discord's audit log knows
+  3. Every event can be switched on or off; bots, roles, channels and members can be ignored, but never bans, kicks or server changes
 - **Recovery** — stuck tickets and unfinished closes resume every 5 minutes and at startup
 - **Diagnostics** — `/tickets diagnostics` checks permissions, role hierarchy, and channel visibility
 - **Running it** (section 9)
@@ -181,6 +185,19 @@ joltbot/
 │       ├── context.py      #   loads a server's settings for one event
 │       ├── forms.py        #   dashboard: reads and checks the settings form
 │       ├── web.py          #   dashboard: the Alliances page
+│       └── templates/
+│   └── modlog/
+│       ├── settings.py     #   the per-server settings: log channels, event switches, ignore lists
+│       ├── constants.py    #   the events it can record, and the names stored in the database
+│       ├── cog.py          #   bot: the listeners that turn Discord events into log entries
+│       ├── service.py      #   decides, finds who did it in the audit log, saves and posts
+│       ├── correlate.py    #   matches an event to its audit-log entry
+│       ├── rules.py        #   whether an event is recorded at all (one pure function)
+│       ├── dispatch.py     #   posts to the log channels, one queue per channel
+│       ├── store.py        #   log entry database operations
+│       ├── diffs.py, events.py, embeds.py, context.py
+│       ├── forms.py        #   dashboard: reads and checks the settings form
+│       ├── web.py          #   dashboard: the Logging page
 │       └── templates/
 ├── bot/                    # the bot process
 │   ├── __main__.py         #   python -m joltbot.bot: startup checks, retry loop, exit codes
@@ -485,6 +502,22 @@ Rules JoltBot keeps:
 - Nobody can accept or reject their own request.
 - A request closes by itself when the member leaves the server.
 
+### Logging (mod log)
+
+Records what happens in the server in log channels of your choice.
+
+1. **Create the log channels in Discord** and make them staff-only. They show the text of edited and deleted messages from every channel JoltBot can see. One channel for everything works; so does one per group.
+2. **Give JoltBot's role View Audit Log** (Server Settings → Roles). Without it, events are still logged, but the entry can't say who did it. Servers that added JoltBot before this permission was in the invite link have to add it by hand.
+3. **Dashboard → Logging.** Pick a channel for each group you want: Members, Messages, Moderation, Server and Voice. A group without a channel records nothing. Voice posts in the Members channel unless it has its own.
+4. Untick any event you don't want, tick **Logging is ON** and save.
+
+Things to know:
+
+- Voice events and avatar changes are off until you tick them: they are a lot of posts.
+- The ignore lists (bots, roles, channels, members) apply to member, message and voice events only. Bans, kicks, timeouts and server changes are always recorded, so nobody can hide their own by adding themself to a list.
+- JoltBot can show the text of an edited or deleted message only while that message is among the last few thousand it has seen since it started. For older messages the entry says what happened, without the text.
+- Entries are also saved in the database. Nothing deletes old entries yet.
+
 ### Letting moderators use the dashboard
 
 By default only the owner and members with **Manage Server** or **Administrator** can open a server's dashboard. To let others in without giving them those permissions:
@@ -558,6 +591,24 @@ Roles and channels must belong to the server, and every role JoltBot gives must 
 | Panel text | `panel_description` | see the page | Up to 2000 characters. `{server}` is filled in |
 
 The same rules about roles and channels apply as for tickets. An alliance's member role is the role JoltBot gives; the reviewer and override roles are only read, so they may be as powerful as you like.
+
+**Logging** (Dashboard → Logging)
+
+| Setting | Key | Default | Notes |
+|---|---|---|---|
+| Logging is ON | `enabled` | off | Needs at least one log channel |
+| Members channel | `members_channel_id` | none | Joins, leaves, nicknames, member roles, avatars |
+| Messages channel | `messages_channel_id` | none | Edited, deleted and bulk-deleted messages |
+| Moderation channel | `moderation_channel_id` | none | Bans, unbans, kicks, timeouts |
+| Server channel | `server_channel_id` | none | Role, channel, server, emoji, sticker and webhook changes |
+| Voice channel | `voice_channel_id` | none | Voice joins, leaves and moves. Empty: the Members channel is used |
+| Event switches | `events` | see the page | One per event. Only the ones you changed are stored. Avatar changes and the three voice events start off |
+| Ignore bots | `ignore_bots` | on | Skips other bots' messages, nicknames and voice activity |
+| Ignored roles | `ignored_role_ids` | none | Up to 50. Events about members holding one are not recorded |
+| Ignored channels | `ignored_channel_ids` | none | Up to 50 channels or categories. Message events there are not recorded. The log channels themselves are always left out |
+| Ignored members | `ignored_user_ids` | none | Up to 50 user IDs |
+
+A group without a channel records nothing. The ignore lists never apply to moderation and server events. Every channel and role must belong to this server.
 
 **Messages.** Placeholders are written in curly brackets and filled in when the message is sent. One that a message doesn't support is left as typed. `{guild}` still works as an old name for `{server}`.
 

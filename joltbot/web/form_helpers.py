@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from fastapi import HTTPException, Request
 from starlette.datastructures import FormData
 
@@ -11,6 +14,33 @@ from .security import get_discord
 # Matches no saved version, so a form that sent none (or nonsense) is refused as out of date.
 NO_VERSION = -1
 STALE_SETTINGS = "Someone else saved settings while you were editing. Reload the page and try again."
+
+
+def form_text(form: Mapping[str, Any], name: str) -> str:
+    """One form field as text, with line endings normalised and the ends trimmed.
+
+    Args:
+        form: The submitted form.
+        name: The field's name.
+
+    Returns:
+        The text; ``""`` for a missing field, or a file where text was expected.
+    """
+    value = form.get(name)
+    return value.replace("\r\n", "\n").strip() if isinstance(value, str) else ""
+
+
+def form_ids(form: Any, name: str) -> list[str]:
+    """Every non-empty value of a field sent more than once (a tick list sends one per ticked box).
+
+    Args:
+        form: The submitted form (supports ``getlist``).
+        name: The field's name.
+
+    Returns:
+        The values in the order they were sent, without repeats.
+    """
+    return list(dict.fromkeys(v.strip() for v in form.getlist(name) if isinstance(v, str) and v.strip()))
 
 
 def form_version(form: FormData, field: str = "version") -> int:

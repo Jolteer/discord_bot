@@ -1,0 +1,76 @@
+{% extends "guild/_layout.html" %}
+{% import "_form.html" as f %}
+
+{% block page %}
+{% call f.page_head("Logging", "Records joins, edits, deletes, bans and server changes in log channels, with who did it.") %}
+  {{ f.refresh_button(guild.id, csrf_token, "/servers/" ~ guild.id ~ "/modlog", "Refresh roles & channels") }}
+{% endcall %}
+
+<div class="mt-5 space-y-2">{{ f.messages_box(errors, warnings, issues, saved) }}</div>
+
+<nav class="jb-jump jb-scroll-x mt-6" aria-label="On this page">
+  {% for id, label in [("status", "Status"), ("recorded", "What is recorded"), ("ignored", "What is ignored")] %}
+    <a href="#{{ id }}" data-spy>{{ label }}</a>
+  {% endfor %}
+</nav>
+
+<form method="post" action="/servers/{{ guild.id }}/modlog" class="mt-5 space-y-5" data-savebar>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="version" value="{{ version }}">
+
+  {% call f.section("Status", id="status", icon="bolt") %}
+    {{ f.toggle("enabled", "Logging is ON", enabled,
+                "While off, JoltBot records nothing in this server. It needs at least one log channel below.") }}
+    <p class="text-sm text-jb-muted">Log channels show the text of edited and deleted messages from every channel JoltBot can see, so keep them staff-only. To name who did something, JoltBot's role needs <strong>View Audit Log</strong>.</p>
+  {% endcall %}
+
+  {% call f.section("What is recorded", "Each group has its own log channel. A group without a channel records nothing.", id="recorded", icon="list") %}
+    {% for group in groups %}
+      <div class="jb-subcard" role="group" aria-label="{{ group.title }}">
+        <p class="jb-label-caps">{{ group.title }}</p>
+        <div class="mt-2 max-w-md">
+          {{ f.channel_select(group.field, group.title ~ " channel", text_channels, group.channel_id, group.help,
+                              "(same as Members)" if group.category == "voice" else "(none: not recorded)") }}
+        </div>
+        {% if not group.posts %}
+          <p class="jb-help mt-2 text-jb-warn">{{ "Neither this channel nor the Members channel is picked" if group.category == "voice" else "No channel is picked" }}, so nothing in this group is recorded.</p>
+        {% endif %}
+        <div class="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          {% for event in group.events %}
+            {{ f.checkbox("ev_" ~ event.key, event.title, event.on) }}
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+    <p class="jb-help">JoltBot can show the text of an edited or deleted message only while that message is among the last few thousand it has seen since it started. For older messages the entry says what happened, without the text.</p>
+  {% endcall %}
+
+  {% call f.section("What is ignored", "These apply to member, message and voice events. Bans, kicks, timeouts and server changes are always recorded, whoever did them.", id="ignored", icon="x") %}
+    {{ f.checkbox("ignore_bots", "Ignore bots", values.ignore_bots,
+                  "Skips other bots' messages, nicknames and voice activity.") }}
+    {{ f.role_picker("ignored_role_ids", "Ignored roles (optional)", roles, values.ignored_role_ids,
+                     "Events about members who hold one of these roles are not recorded. Up to " ~ max_ignored ~ ".") }}
+    <div role="group" aria-label="Ignored channels">
+      <div class="jb-field-label">Ignored channels (optional)</div>
+      <p class="jb-help mt-0.5">Messages edited or deleted here are not recorded. Ticking a category covers every channel and thread in it. Up to {{ max_ignored }}. The log channels themselves are always left out.</p>
+      <div class="jb-picker mt-2 sm:grid-cols-2">
+        {% for c in ignorable_channels %}
+          <label class="jb-picker-row">
+            <input type="checkbox" name="ignored_channel_ids" value="{{ c.id }}" {{ 'checked' if c.id in values.ignored_channel_ids }} class="jb-check">
+            <span class="truncate">{{ c.label }}</span>
+          </label>
+        {% else %}
+          <p class="px-2 py-1.5 text-sm text-jb-subtle">This server has no text channels yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+    <label class="block max-w-md">
+      <span class="jb-field-label">Ignored members (optional)</span>
+      <span class="jb-help mt-0.5">One user ID per line, up to {{ max_ignored }}. In Discord, switch on Developer Mode, then right-click a member and choose Copy User ID.</span>
+      <textarea name="ignored_user_ids" rows="3" inputmode="numeric" class="jb-input jb-input-mono mt-1.5">{{ values.ignored_user_ids | join("\n") }}</textarea>
+    </label>
+  {% endcall %}
+
+  {{ f.savebar() }}
+</form>
+{% endblock %}

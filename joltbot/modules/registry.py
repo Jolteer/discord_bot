@@ -77,6 +77,7 @@ MODULES: dict[str, ModuleInfo] = {
             description="Records joins, edits, deletes, bans and server changes in log channels, with who did it.",
             settings_model=ModLogSettings,
             cog="joltbot.modules.modlog.cog",
+            web="joltbot.modules.modlog.web",
         ),
     )
 }
