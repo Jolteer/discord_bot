@@ -17,7 +17,7 @@ from ...web.routes.guild import guild_context
 from ...web.security import CsrfProtected, GuildAccess, RequireGuild, get_db
 from .constants import ISSUE_PREFIX, MODULE
 from .forms import event_groups, foreign_id_errors, form_options, parse_form, setup_warnings, validation_errors
-from .settings import MAX_IGNORED, ModLogSettings
+from .settings import MAX_IGNORED, MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, ModLogSettings
 
 router = APIRouter(prefix=f"/servers/{{guild_id}}/{MODULE}")
 
@@ -52,6 +52,8 @@ async def _render_form(
             "version": version,
             "groups": event_groups(values),
             "max_ignored": MAX_IGNORED,
+            "min_retention_days": MIN_RETENTION_DAYS,
+            "max_retention_days": MAX_RETENTION_DAYS,
             "errors": errors,
             "warnings": warnings,
             "issues": issues,

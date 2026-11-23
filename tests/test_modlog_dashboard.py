@@ -102,6 +102,7 @@ def form(csrf, version=1, events=None, **fields):
         "voice_channel_id": "",
         "ignore_bots": "on",
         "ignored_user_ids": "",
+        "retention_days": "30",
         **(default_events() if events is None else events),
     }
     values.update(fields)
@@ -218,7 +219,17 @@ async def test_the_ignore_lists_are_saved_and_shown_again(db, alice):
     assert 'name="ignore_bots" checked' not in page
 
 
-async def test_a_setting_the_page_does_not_show_keeps_its_value(db, alice):
+async def test_the_retention_period_is_shown_saved_and_shown_again(db, alice):
+    page = (await alice.get(URL)).text
+    assert 'name="retention_days" value="30"' in page and "Keep entries for (days)" in page
+
+    assert (await post(alice, retention_days="90")).status_code == 303
+    assert (await state(db)).config.retention_days == 90
+    assert 'name="retention_days" value="90"' in (await alice.get(URL)).text
+
+
+async def test_a_form_without_the_retention_field_keeps_the_saved_value(db, alice):
+    # A Logging page opened before the field existed sends no retention_days at all.
     async with db.session() as session, session.begin():
         await save_module(
             session,
@@ -229,7 +240,7 @@ async def test_a_setting_the_page_does_not_show_keeps_its_value(db, alice):
             expected_version=1,
             actor=SYSTEM_ACTOR,
         )
-    assert (await post(alice, version=2)).status_code == 303
+    assert (await post(alice, version=2, retention_days=None)).status_code == 303
     assert (await state(db)).config.retention_days == 90
 
 
@@ -301,6 +312,14 @@ async def test_the_ignore_lists_have_a_limit(db, alice):
     assert r.status_code == 400 and f"Ignored members: at most {MAX_IGNORED} entries." in html.unescape(r.text)
 
 
+@pytest.mark.parametrize("value", ["0", "366", "-5", "abc", "7.5", ""])
+async def test_a_retention_period_outside_1_to_365_days_is_refused(db, alice, value):
+    r = await post(alice, retention_days=value)
+    assert r.status_code == 400
+    assert "Keep entries for: a whole number of days from 1 to 365." in html.unescape(r.text)
+    assert (await state(db)).version == 1  # nothing was saved
+
+
 async def test_typed_text_is_shown_back_escaped(alice):
     r = await post(alice, ignored_user_ids="<script>alert(1)</script>")
     assert r.status_code == 400 and "<script>alert(1)</script>" not in r.text
@@ -327,7 +346,10 @@ def test_unticked_boxes_are_read_as_off():
     assert parsed["ignore_bots"] is False
     assert parsed["events"] == {key: False for key, spec in EVENTS.items() if spec.default_on}
     assert parsed["members_channel_id"] is None and parsed["ignored_user_ids"] == []
-    assert "retention_days" not in parsed  # not on the page, so the saved value is kept
+    assert "retention_days" not in parsed  # not sent, so the route keeps the saved value
+
+    parsed = parse_form(Form(retention_days=" 14 "))
+    assert parsed["retention_days"] == "14"
 
 
 # ------------------------------------------------------------------ warnings above the form

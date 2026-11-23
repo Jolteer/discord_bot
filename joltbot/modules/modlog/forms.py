@@ -26,9 +26,10 @@ from .constants import (
     CATEGORY_VOICE,
     EVENTS,
 )
-from .settings import MAX_IGNORED, ModLogSettings
+from .settings import MAX_IGNORED, MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, ModLogSettings
 
 EVENT_FIELD_PREFIX = "ev_"  # each event's tick box is named ev_<event key>
+RETENTION_FIELD = "retention_days"
 
 # What each log channel receives, shown under its dropdown.
 CHANNEL_HELP = {
@@ -43,6 +44,7 @@ FIELD_LABELS = {
     "ignored_channel_ids": "Ignored channels",
     "ignored_role_ids": "Ignored roles",
     "ignored_user_ids": "Ignored members",
+    RETENTION_FIELD: "Keep entries for",
 }
 # Server-wide permissions the mod log needs to post, as (bit, name). Bits come from the invite list.
 POST_PERMISSIONS = [
@@ -64,8 +66,9 @@ def parse_form(form: Any) -> dict[str, Any]:
     events switched away from their default are kept, so a server that never
     touched an event follows its default, also if that default changes later.
 
-    Settings this page doesn't show (``retention_days``) are not in the result:
-    the route keeps their saved values.
+    ``retention_days`` is only in the result when the form sent it. A page
+    opened before the field existed doesn't, and the route then keeps the
+    saved value. An empty field is sent, and is refused as not a number.
 
     Args:
         form: Starlette form data (supports ``get`` / ``getlist``).
@@ -78,7 +81,7 @@ def parse_form(form: Any) -> dict[str, Any]:
         ticked = EVENT_FIELD_PREFIX + key in form
         if ticked != spec.default_on:
             events[key] = ticked
-    return {
+    parsed: dict[str, Any] = {
         **{f"{category}_channel_id": form_text(form, f"{category}_channel_id") or None for category in CATEGORIES},
         "events": events,
         "ignore_bots": "ignore_bots" in form,
@@ -86,6 +89,9 @@ def parse_form(form: Any) -> dict[str, Any]:
         "ignored_channel_ids": form_ids(form, "ignored_channel_ids"),
         "ignored_user_ids": _user_ids(form_text(form, "ignored_user_ids")),
     }
+    if RETENTION_FIELD in form:
+        parsed[RETENTION_FIELD] = form_text(form, RETENTION_FIELD)
+    return parsed
 
 
 def validation_errors(exc: ValidationError) -> list[str]:
@@ -103,6 +109,8 @@ def validation_errors(exc: ValidationError) -> list[str]:
         label = FIELD_LABELS.get(loc[0], loc[0]) if loc else "Settings"
         if err["type"] == "too_long":
             errors.append(f"{label}: at most {MAX_IGNORED} entries.")
+        elif loc[:1] == [RETENTION_FIELD]:
+            errors.append(f"{label}: a whole number of days from {MIN_RETENTION_DAYS} to {MAX_RETENTION_DAYS}.")
         elif loc[:1] == ["ignored_user_ids"]:
             errors.append(
                 f"{label}: every entry must be a member's user ID, a long number. In Discord, switch on "

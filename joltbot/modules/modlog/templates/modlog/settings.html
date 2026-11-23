@@ -9,7 +9,7 @@
 <div class="mt-5 space-y-2">{{ f.messages_box(errors, warnings, issues, saved) }}</div>
 
 <nav class="jb-jump jb-scroll-x mt-6" aria-label="On this page">
-  {% for id, label in [("status", "Status"), ("recorded", "What is recorded"), ("ignored", "What is ignored")] %}
+  {% for id, label in [("status", "Status"), ("recorded", "What is recorded"), ("ignored", "What is ignored"), ("history", "History")] %}
     <a href="#{{ id }}" data-spy>{{ label }}</a>
   {% endfor %}
 </nav>
@@ -68,6 +68,15 @@
       <span class="jb-field-label">Ignored members (optional)</span>
       <span class="jb-help mt-0.5">One user ID per line, up to {{ max_ignored }}. In Discord, switch on Developer Mode, then right-click a member and choose Copy User ID.</span>
       <textarea name="ignored_user_ids" rows="3" inputmode="numeric" class="jb-input jb-input-mono mt-1.5">{{ values.ignored_user_ids | join("\n") }}</textarea>
+    </label>
+  {% endcall %}
+
+  {% call f.section("History", "Every entry is also saved in JoltBot's database, including the text of deleted messages.", id="history", icon="history") %}
+    <label class="block max-w-xs">
+      <span class="jb-field-label">Keep entries for (days)</span>
+      <span class="jb-help mt-0.5">Older entries are deleted from JoltBot's database once a day. Shortening this deletes the older ones within a day. Posts already in your log channels are not touched. From {{ min_retention_days }} to {{ max_retention_days }}.</span>
+      <input type="number" name="retention_days" value="{{ values.retention_days }}" min="{{ min_retention_days }}" max="{{ max_retention_days }}" step="1" required
+             class="jb-input mt-1.5">
     </label>
   {% endcall %}
 
