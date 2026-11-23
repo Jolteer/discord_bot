@@ -131,6 +131,29 @@ async def test_bot_health_endpoint_follows_the_heartbeat(db):
         assert (await client.get("/health")).status_code == 200
 
 
+async def test_health_endpoints_answer_head_like_get(db):
+    # Some uptime monitors (UptimeRobot's free plan) can only send HEAD. They must get
+    # the same status code as GET, or they report "down" (405) whatever the bot does.
+    app = create_app(make_config(), db, FakeDiscord(), check_schema=False)
+    async with client_for(app) as client:
+        r = await client.head("/health/bot")
+        assert (r.status_code, r.content) == (503, b"")  # bot never reported in
+
+        await _beat(db)
+        r = await client.head("/health/bot")
+        assert (r.status_code, r.content) == (200, b"")
+
+        r = await client.head("/health")
+        assert (r.status_code, r.content) == (200, b"")
+
+
+async def test_health_endpoints_still_refuse_other_methods(db):
+    app = create_app(make_config(), db, FakeDiscord(), check_schema=False)
+    async with client_for(app) as client:
+        assert (await client.post("/health/bot")).status_code == 405
+        assert (await client.post("/health")).status_code == 405
+
+
 async def test_bot_health_endpoint_with_a_broken_database(db):
     class BrokenDb:
         def session(self):
