@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import discord
 from discord.ext import commands
@@ -158,8 +158,9 @@ def _channel_chain(channel: Any, channel_id: int) -> tuple[int, ...]:
     """
     ids = [channel_id]
     parent = getattr(channel, "parent", None)  # only threads have one
-    if isinstance(getattr(parent, "id", None), int):
-        ids.append(parent.id)
+    parent_id = getattr(parent, "id", None)
+    if isinstance(parent_id, int):
+        ids.append(parent_id)
         channel = parent
     category_id = getattr(channel, "category_id", None)
     if isinstance(category_id, int):
@@ -379,8 +380,10 @@ class ModLog(commands.Cog):
             return
         event = _user_event(guild, EVENT_MEMBER_LEAVE, user)
         if isinstance(getattr(user, "roles", None), list):
-            event.add_time("Joined", user.joined_at)
-            event.add_info("Roles", _role_names(user.roles))
+            # The cast: only a Member has a role list; a plain User (not in the bot's cache) has none.
+            member = cast(discord.Member, user)
+            event.add_time("Joined", member.joined_at)
+            event.add_info("Roles", _role_names(member.roles))
         await manager.record(guild, ctx, event)
 
     @commands.Cog.listener()
@@ -833,8 +836,10 @@ class ModLog(commands.Cog):
         if before.channel is None:
             ctx = await manager.gate(guild.id, _user_facts(EVENT_VOICE_JOIN, member))
             if ctx is not None:
-                event = _user_event(guild, EVENT_VOICE_JOIN, member, channel_id=after.channel.id)
-                event.extra["channel_name"] = after.channel.name
+                # The cast: they were in no channel before and the two differ, so they are in one now.
+                joined = cast("discord.VoiceChannel | discord.StageChannel", after.channel)
+                event = _user_event(guild, EVENT_VOICE_JOIN, member, channel_id=joined.id)
+                event.extra["channel_name"] = joined.name
                 await manager.record(guild, ctx, event)
             return
 
