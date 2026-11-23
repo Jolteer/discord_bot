@@ -339,6 +339,40 @@ class FakeBot:
         self.resolved.append((guild_id, key))
 
 
+def meet_at(monkeypatch: Any, module: Any, *names: str, parties: int = 2) -> None:
+    """Make the first ``parties`` calls to these functions wait for each other, then run together.
+
+    For tests of two people clicking at the same moment. Left to timing, one
+    click usually finishes before the other has even read the database, and the
+    slower one is then turned away by an earlier, friendlier check. This holds
+    every caller at the function that decides (``store.claim`` and the like)
+    until all of them are there, so each got past its own checks while nothing
+    was decided yet. Only the database's own guard can pick the winner.
+
+    Args:
+        monkeypatch: pytest's fixture; the functions are restored after the test.
+        module: Where the functions live, e.g. the ``store`` module.
+        *names: The functions to hold callers at. They share one meeting point.
+        parties: How many calls wait for each other. Later calls pass straight through.
+    """
+    barrier = asyncio.Barrier(parties)
+    waiting = parties
+
+    def gate(real: Any) -> Any:
+        async def gated(*args: Any, **kwargs: Any) -> Any:
+            nonlocal waiting
+            if waiting > 0:
+                waiting -= 1
+                # The timeout turns "the other click never got this far" into a failed test, not a hung one.
+                await asyncio.wait_for(barrier.wait(), timeout=5)
+            return await real(*args, **kwargs)
+
+        return gated
+
+    for name in names:
+        monkeypatch.setattr(module, name, gate(getattr(module, name)))
+
+
 async def settle(manager: Any) -> None:
     """Wait for the ticket manager's background work (finalize, delete) to finish."""
     while manager._tasks:

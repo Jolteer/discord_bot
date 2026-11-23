@@ -4,6 +4,7 @@ Everything runs against fake Discord objects (tests/fakes.py) and a real SQLite
 file, so no network or bot token is needed.
 """
 
+import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -44,6 +45,7 @@ from .fakes import (
     fake_member,
     fake_text_channel,
     http_error,
+    meet_at,
     record_messages,
 )
 
@@ -680,6 +682,57 @@ async def test_buttons_only_act_on_this_servers_request(world):
     await RequestDecisionView(world.bot).accept(click)
     assert "no longer exists" in click.response.send_message.await_args.args[0]
     assert world.roles.one not in world.applicant.roles
+
+
+# ------------------------------------------------------------------ two reviewers at once
+
+
+def _told(click):
+    """What a reviewer was told after their click: the private follow-up, or an immediate reply."""
+    return (click.followup.send.await_args or click.response.send_message.await_args).args[0]
+
+
+async def test_two_reviewers_clicking_accept_at_once_accept_the_member_once(world, monkeypatch):
+    meet_at(monkeypatch, store, "claim")
+    request, _ = await _apply(world)
+    message = world.channels.one.sent[0]
+    clicks = {who.id: _click(world, who, message) for who in (world.r5_one, world.r4_one)}
+
+    await asyncio.gather(*(RequestDecisionView(world.bot).accept(click) for click in clicks.values()))
+
+    request = await _reload(world, request)
+    assert request.status == "accepted" and request.decided_by in clicks
+    loser = next(user_id for user_id in clicks if user_id != request.decided_by)
+    assert _told(clicks[request.decided_by]).startswith("✅")
+    assert _told(clicks[loser]) == f"Already handled by <@{request.decided_by}>."
+    # The member was let in once: one role change, one DM, one log post.
+    world.applicant.edit.assert_awaited_once()
+    world.applicant.send.assert_awaited_once()
+    assert world.roles.one in world.applicant.roles and len(world.channels.log.sent) == 1
+
+
+async def test_accept_and_reject_at_the_same_moment_never_both_happen(world, monkeypatch):
+    meet_at(monkeypatch, store, "claim", "decide")  # Accept goes through claim, Reject through decide
+    request, _ = await _apply(world)
+    accept_click = _click(world, world.r5_one, world.channels.one.sent[0])
+    # The other reviewer already had the reject reason form open, and submits it now.
+    reject_form = RejectReasonModal(world.bot, request.id)
+    reject_submit = fake_interaction(world.guild, world.r4_one)
+    reject_form.reason._refresh_state(reject_submit, {"value": "Not on the roster"})
+
+    await asyncio.gather(RequestDecisionView(world.bot).accept(accept_click), reject_form.on_submit(reject_submit))
+
+    request = await _reload(world, request)
+    world.applicant.send.assert_awaited_once()  # told once, about the decision that won
+    assert len(world.channels.log.sent) == 1
+    if request.status == "accepted":
+        assert world.roles.one in world.applicant.roles and request.reason is None
+        assert _told(reject_submit) == f"Already handled by <@{R5_ONE_ID}>."
+    else:
+        assert request.status == "rejected" and request.reason == "Not on the roster"
+        assert world.roles.one not in world.applicant.roles
+        world.applicant.edit.assert_not_awaited()
+        assert _told(accept_click) == f"Already handled by <@{R4_ONE_ID}>."
 
 
 # ------------------------------------------------------------------ /alliances commands

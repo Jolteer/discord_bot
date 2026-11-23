@@ -5,6 +5,7 @@ them. Everything runs against fake Discord objects (tests/fakes.py) and a real
 SQLite file, so no network or bot token is needed.
 """
 
+import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -45,12 +46,13 @@ from .fakes import (
     fake_message,
     fake_text_channel,
     http_error,
+    meet_at,
     settle,
 )
 
 STAFF_ROLE, ACCEPT_ROLE, PENDING_ROLE, EXTRA_ROLE = 50, 51, 52, 53
 PANEL_CHANNEL, CATEGORY, LOG_CHANNEL = 60, 61, 62
-STAFF_ID, APPLICANT_ID, OUTSIDER_ID = 5, 7, 8
+STAFF_ID, OTHER_STAFF_ID, APPLICANT_ID, OUTSIDER_ID = 5, 6, 7, 8
 ANSWERS = [{"label": "How did you find this server?", "value": "A friend"}]
 
 
@@ -513,6 +515,73 @@ async def test_confirm_prompts_recheck_staff(world, prompt):
     assert await view.interaction_check(click) is False
     click.response.send_message.assert_awaited_once_with("Only staff can do this.", ephemeral=True)
     view.stop()
+
+
+# ------------------------------------------------------------------ two staff members at once
+
+
+def _shown(click):
+    """The text a staff prompt was replaced with after its button was pressed."""
+    return click.edit_original_response.await_args.kwargs["content"]
+
+
+def _log_posts(world):
+    """The decision posts in the log channel (each carries the log embed)."""
+    return [call for call in world.log.send.await_args_list if call.kwargs.get("embed") is not None]
+
+
+async def test_two_staff_confirming_accept_at_once_accept_the_applicant_once(world, monkeypatch):
+    meet_at(monkeypatch, store, "claim")
+    ticket, channel = await _open(world)
+    ctx = await load_context(world.bot, GUILD_A)
+    other_staff = fake_member(world.guild, OTHER_STAFF_ID, name="staffer-two", roles=[world.roles.staff])
+    # Both opened the Accept prompt while the ticket was still open, so each prompt holds its own copy of it.
+    clicks = [fake_interaction(world.guild, who, channel) for who in (world.staff, other_staff)]
+    prompts = [AcceptView(world.bot, ticket, ctx.settings) for _ in clicks]
+
+    await asyncio.gather(*(prompt.confirm.callback(click) for prompt, click in zip(prompts, clicks, strict=True)))
+
+    assert sorted(_shown(click) for click in clicks) == sorted(
+        [f"✅ Accepted <@{APPLICANT_ID}>. Closing the ticket…", "❌ Someone else already handled this ticket."]
+    )
+    ticket = await _reload(world, ticket)
+    assert (ticket.status, ticket.outcome) == ("closed", "accepted")
+    assert ticket.handled_by in (STAFF_ID, OTHER_STAFF_ID)
+    # The applicant was let in once: one role change, one welcome DM, one log post.
+    world.applicant.add_roles.assert_awaited_once()
+    world.applicant.send.assert_awaited_once()
+    assert world.roles.accept in world.applicant.roles and world.roles.pending not in world.applicant.roles
+    assert len(_log_posts(world)) == 1
+
+
+async def test_accept_and_deny_and_kick_at_the_same_moment_never_both_happen(world, monkeypatch):
+    meet_at(monkeypatch, store, "claim")
+    ticket, channel = await _open(world)
+    ctx = await load_context(world.bot, GUILD_A)
+    other_staff = fake_member(world.guild, OTHER_STAFF_ID, name="staffer-two", roles=[world.roles.staff])
+    accept_click = fake_interaction(world.guild, world.staff, channel)
+    deny_click = fake_interaction(world.guild, other_staff, channel)
+    accept_prompt = AcceptView(world.bot, ticket, ctx.settings)
+    deny_prompt = DenyActionView(world.bot, ticket, "Not on the roster")
+
+    await asyncio.gather(accept_prompt.confirm.callback(accept_click), deny_prompt.kick.callback(deny_click))
+
+    ticket = await _reload(world, ticket)
+    assert ticket.status == "closed" and len(_log_posts(world)) == 1
+    lost = "❌ Someone else already handled this ticket."
+    if ticket.outcome == "accepted":
+        # Accepted, so not kicked, and the staff member who tried to deny is told.
+        assert _shown(deny_click) == lost and _shown(accept_click).startswith("✅ Accepted")
+        assert world.roles.accept in world.applicant.roles
+        world.applicant.kick.assert_not_awaited()
+        assert world.guild.get_member(APPLICANT_ID) is world.applicant
+    else:
+        # Denied and kicked, so no role was given, and the staff member who tried to accept is told.
+        assert ticket.outcome == "denied" and ticket.kicked is True
+        assert _shown(accept_click) == lost and _shown(deny_click).startswith("❌ Denied and kicked.")
+        world.applicant.add_roles.assert_not_awaited()
+        world.applicant.kick.assert_awaited_once()
+        assert world.roles.accept not in world.applicant.roles
 
 
 # ------------------------------------------------------------------ the panel button and form

@@ -36,10 +36,16 @@ Open <http://localhost:8000>.
 pytest
 ruff check .
 ruff format .          # CI runs `ruff format --check .`
+mypy                   # type check; settings are in pyproject.toml
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs lint, format check, tests, and a
-Docker image build that hits `/health`.
+GitHub Actions (`.github/workflows/ci.yml`) runs lint, format check, type check,
+tests, and a Docker image build that hits `/health`.
+
+`tests/test_contract.py` pins what Discord and the servers already depend on: the
+slash commands and the `custom_id` of every button and menu. If it fails, the
+change breaks messages that are already posted. Change the expected values there
+only when that is what you mean to do.
 
 ## Code style
 
@@ -96,7 +102,7 @@ guild access is checked, and how tickets are structured as a reference module.
 
 ## Changing dependencies
 
-1. Edit the pin in `requirements.txt` (or `requirements-dev.txt` for a test or lint tool).
+1. Edit the pin in `requirements.txt` (or `requirements-dev.txt` for a test, lint or type-check tool).
 2. Regenerate both lock files (they carry a checksum for every package file):
 
    ```powershell

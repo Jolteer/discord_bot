@@ -291,6 +291,7 @@ Recorded, not fixed. Each fix would be its own commit after approval.
 | B4 | `web/routes/auth.py:115` against `web/sessions.py:84` | The cookie always lives 7 days, while the server-side session can expire sooner (it follows Discord's token lifetime). The user is simply sent to log in again. | Cosmetic |
 | B5 | `web/sessions.py:71` | Expired session rows are deleted only when somebody logs in. With few logins, expired rows (and their tokens) stay in the table. | Low |
 | B6 | `tickets/views/staff.py:133` | Existing TODO: `require_attachment` only warns on Accept. The dashboard label says "Warn staff", so behavior and label agree; the setting name does not. | Naming |
+| B7 | `web/form_helpers.py` (`form_version`) | Found by mypy in Phase 1. If a settings form is posted with a file uploaded under the name `version`, `int()` raises `TypeError`, which the `except ValueError` does not catch, so the page answers 500 instead of "someone else saved". Only a logged-in dashboard user with a valid CSRF token can send such a form, and only to their own server. | Low |
 
 ## 7. Security findings
 

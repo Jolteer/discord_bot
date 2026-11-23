@@ -6,6 +6,7 @@ goes through the real /login -> /auth/callback flow.
 """
 
 import html
+import importlib
 import re
 from dataclasses import replace
 from datetime import timedelta
@@ -20,11 +21,15 @@ from joltbot.core.discord_rest import CATEGORY, TEXT_CHANNEL, Channel, DiscordEr
 from joltbot.core.guild_settings import SYSTEM_ACTOR, load_module, save_module
 from joltbot.core.health import write_heartbeat
 from joltbot.core.issues import record_issue
-from joltbot.core.models import AuditLog, Guild, GuildIssue, WebSession
+from joltbot.core.models import AuditLog, Guild, GuildIssue, ModuleSetting, WebSession
 from joltbot.core.permissions import ADMINISTRATOR, ELEVATED_PERMISSIONS, MANAGE_GUILD
 from joltbot.core.types import utcnow
 from joltbot.modules.registry import MODULES, ModuleInfo
 from joltbot.web.app import create_app
+from joltbot.web.routes import auth as auth_routes
+from joltbot.web.routes import guild as guild_routes
+from joltbot.web.routes import health as health_routes
+from joltbot.web.routes import pages as pages_routes
 from joltbot.web.security import parse_user_guilds
 
 from .conftest import GUILD_A, GUILD_B
@@ -69,6 +74,7 @@ class FakeDiscord:
         self.tokens = {}  # access token -> [user, guilds]
         self.data = {GUILD_A: guild_data(GUILD_A), GUILD_B: guild_data(GUILD_B)}
         self.members = {}  # (guild ID, user ID) -> the role IDs that member holds
+        self.scope = "identify guilds"  # what the user agreed to share on Discord's consent screen
 
     async def member_role_ids(self, guild_id, user_id):
         return frozenset(self.members.get((guild_id, user_id), ()))
@@ -81,7 +87,7 @@ class FakeDiscord:
             raise DiscordError("bad code", 400)
         token = f"token-{code}"
         self.tokens[token] = list(self.logins[code])
-        return {"access_token": token, "expires_in": 604800, "scope": "identify guilds"}
+        return {"access_token": token, "expires_in": 604800, "scope": self.scope}
 
     async def get_user(self, token):
         return self.tokens[token][0]
@@ -1084,3 +1090,152 @@ async def test_managers_are_not_asked_for_their_roles(alice, fake):
 
     fake.member_role_ids = down
     assert (await alice.get(f"/servers/{GUILD_A}/tickets")).status_code == 200
+
+
+# --------------------------------------------------------------------------- every POST route
+
+
+def post_routes():
+    """Every route that changes something, read from the routers the app mounts.
+
+    A POST route added later is covered by the tests below without anyone
+    having to remember to list it.
+    """
+    routers = [auth_routes.router, guild_routes.router, health_routes.router, pages_routes.router]
+    routers += [importlib.import_module(module.web).router for module in MODULES.values() if module.web]
+    return sorted({route.path for router in routers for route in router.routes if "POST" in route.methods})
+
+
+POST_ROUTES = post_routes()
+SERVER_POST_ROUTES = [route for route in POST_ROUTES if "{guild_id}" in route]
+ISSUE_ID = 1  # the first issue recorded in a fresh database
+
+
+def url_of(route, guild_id):
+    return route.format(guild_id=guild_id, issue_id=ISSUE_ID)
+
+
+async def server_state(db, guild_id):
+    """Everything a dashboard POST could change for one server."""
+    async with db.session() as session:
+        settings = await session.execute(
+            select(ModuleSetting.module, ModuleSetting.version, ModuleSetting.enabled)
+            .where(ModuleSetting.guild_id == guild_id)
+            .order_by(ModuleSetting.module)
+        )
+        audit = await session.execute(select(AuditLog.id).where(AuditLog.guild_id == guild_id))
+        issues = await session.execute(select(GuildIssue.id).where(GuildIssue.guild_id == guild_id))
+        return [tuple(row) for row in settings], list(audit.scalars()), list(issues.scalars())
+
+
+def test_the_post_routes_were_found():
+    # Without this, a mistake in post_routes() would leave the tests below running over nothing.
+    assert {"/logout", "/servers/{guild_id}/tickets", "/servers/{guild_id}/access"} <= set(POST_ROUTES)
+    assert len(SERVER_POST_ROUTES) >= 6
+
+
+@pytest.mark.parametrize("route", POST_ROUTES)
+async def test_every_post_needs_a_login(app, route):
+    async with client_for(app) as client:
+        r = await client.post(url_of(route, GUILD_A), data={"csrf_token": "anything"})
+    assert r.status_code == 303 and r.headers["location"] == "/login"
+
+
+@pytest.mark.parametrize("route", POST_ROUTES)
+async def test_every_post_needs_the_csrf_token(db, alice, route):
+    before = await server_state(db, GUILD_A)
+    assert (await alice.post(url_of(route, GUILD_A))).status_code == 403
+    assert await server_state(db, GUILD_A) == before
+    assert (await alice.get("/servers")).status_code == 200  # and still logged in: /logout did not run
+
+
+@pytest.mark.parametrize("route", POST_ROUTES)
+async def test_every_post_refuses_a_request_sent_from_another_website(db, alice, route):
+    csrf = await csrf_of(alice)
+    before = await server_state(db, GUILD_A)
+    r = await alice.post(url_of(route, GUILD_A), data={"csrf_token": csrf}, headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403
+    assert await server_state(db, GUILD_A) == before
+    assert (await alice.get("/servers")).status_code == 200
+
+
+@pytest.mark.parametrize("route", SERVER_POST_ROUTES)
+async def test_every_server_post_is_closed_to_another_servers_admin(db, alice, route):
+    async with db.session() as session, session.begin():
+        await record_issue(session, GUILD_B, "tickets.test", "B's problem")  # gets ISSUE_ID
+    csrf = await csrf_of(alice)
+    before = await server_state(db, GUILD_B)
+    assert before[2] == [ISSUE_ID]
+    # Alice manages A. She is only a member of B, and the token is her own valid one.
+    r = await alice.post(url_of(route, GUILD_B), data={"csrf_token": csrf})
+    assert r.status_code == 403
+    assert await server_state(db, GUILD_B) == before
+
+
+# --------------------------------------------------------------------------- logins that must fail
+
+
+async def _start_login(client):
+    """Visit /login; returns the ``state`` value Discord would send back."""
+    r = await client.get("/login")
+    return parse_qs(urlparse(r.headers["location"]).query)["state"][0]
+
+
+async def _nobody_is_logged_in(db, response):
+    async with db.session() as session:
+        sessions = list((await session.execute(select(WebSession.id))).scalars())
+    return sessions == [] and "joltbot_session" not in response.headers.get("set-cookie", "")
+
+
+async def test_login_is_refused_when_the_user_does_not_share_their_server_list(app, db, fake):
+    fake.logins["c"] = (ALICE, [])
+    fake.scope = "identify"  # they unticked "know what servers you're in" on Discord
+    async with client_for(app) as client:
+        r = await client.get("/auth/callback", params={"code": "c", "state": await _start_login(client)})
+    assert r.status_code == 400 and "needs to see your username and server list" in html.unescape(r.text)
+    assert await _nobody_is_logged_in(db, r)
+
+
+async def test_cancelling_on_discord_logs_nobody_in(app, db, fake):
+    fake.logins["c"] = (ALICE, [])
+    async with client_for(app) as client:
+        state = await _start_login(client)
+        # Discord sends error= when the user presses Cancel. A code sent along with it is ignored.
+        r = await client.get("/auth/callback", params={"error": "access_denied", "code": "c", "state": state})
+    assert r.status_code == 400 and "Login was cancelled on Discord." in r.text
+    assert await _nobody_is_logged_in(db, r)
+
+
+@pytest.mark.parametrize("failing_call", ["get_user", "get_user_guilds"])
+async def test_discord_failing_in_the_middle_of_a_login_logs_nobody_in(app, db, fake, failing_call):
+    async def down(token):
+        raise DiscordError("Discord is down", 503)
+
+    fake.logins["c"] = (ALICE, [])
+    setattr(fake, failing_call, down)
+    async with client_for(app) as client:
+        r = await client.get("/auth/callback", params={"code": "c", "state": await _start_login(client)})
+    page = html.unescape(r.text)
+    assert r.status_code == 400 and "Discord didn't accept the login" in page and 'href="/login"' in r.text
+    assert await _nobody_is_logged_in(db, r)
+
+
+# --------------------------------------------------------------------------- browser security headers
+
+
+async def test_every_response_carries_the_security_headers(app):
+    async with client_for(app) as client:
+        responses = [await client.get("/"), await client.get("/health"), await client.get("/servers")]
+    for r in responses:
+        assert r.headers["x-content-type-options"] == "nosniff"
+        assert r.headers["x-frame-options"] == "DENY"
+        assert r.headers["referrer-policy"] == "same-origin"
+        assert "default-src 'self'" in r.headers["content-security-policy"]
+        assert "strict-transport-security" not in r.headers  # this test site is plain http
+
+
+async def test_an_https_site_tells_browsers_to_stay_on_https(db, two_guilds, fake):
+    app = create_app(make_config(public_base_url="https://joltbot.example.com"), db, fake, check_schema=False)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://joltbot.example.com") as c:
+        r = await c.get("/")
+    assert r.headers["strict-transport-security"] == "max-age=31536000"
