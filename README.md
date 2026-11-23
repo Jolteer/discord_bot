@@ -586,12 +586,14 @@ The two "Denied DM" endings are added to the Denied DM after a blank line; leave
 ### 7.1 Which hosts work
 
 The bot and the dashboard share one SQLite file, so **both containers must run on the same machine with a persistent disk**:
-- **Works:** any VPS (Hetzner, DigitalOcean, AWS EC2/Lightsail, …) with Docker Compose. This is the recommended setup.
+- **Works:** any VPS with Docker Compose. This is the recommended setup. The live JoltBot runs on AWS Lightsail, which section 7.2 follows. Hetzner (where it ran until November 2026), DigitalOcean and AWS EC2 work the same way: only the place where you open the firewall ports and find the IP address differs.
 - **Doesn't work as-is:** platforms that run each service on its own machine or with a temporary disk (Render, Railway, Fly.io with separate apps). Those need a shared database such as Postgres first (section 11).
 
-### 7.2 Hetzner VPS with Docker (main path)
+### 7.2 AWS Lightsail with Docker (main path)
 
-These steps assume Ubuntu 24.04 and a user called `botuser`. The live JoltBot server is set up a little differently (it runs from `/root/joltbot`, with Caddy); [DEPLOYMENT.md](DEPLOYMENT.md) has its exact commands.
+These steps assume Ubuntu 24.04 and a user called `botuser`. A Lightsail Ubuntu instance comes with a ready-made user called `ubuntu`: use that name wherever this README says `botuser`. The live JoltBot server runs this way, from `/home/ubuntu/joltbot` with Caddy; [DEPLOYMENT.md](DEPLOYMENT.md) has its exact commands.
+
+On Lightsail, create the instance on a **dual-stack** plan with at least 1 GB of memory (2 GB builds the image comfortably), then create a **static IP** under Networking and attach it. Without one, the address changes whenever the instance is stopped and started.
 
 ```bash
 # as root / sudo: install Docker (official convenience script)
@@ -621,7 +623,7 @@ docker compose --profile proxy up -d --build    # with a domain: also starts Cad
 docker compose ps
 ```
 
-In the **Hetzner Cloud Console → Firewalls**, allow inbound TCP **22** (SSH), plus **80** and **443** (and UDP 443) once you use Caddy. Port 8000 does **not** need to be open: it's published on 127.0.0.1 only.
+In the **Lightsail console → your instance → Networking → Firewall rules**, allow inbound TCP **22** (SSH), plus **80** and **443** (and UDP 443) once you use Caddy, each from any IPv4 and any IPv6 address. On Hetzner the same ports go in the Hetzner Cloud Console → Firewalls. Use the host's firewall rather than `ufw` on the server: Docker publishes container ports past `ufw`. Port 8000 does **not** need to be open: it's published on 127.0.0.1 only.
 
 Containers have `restart: unless-stopped`, and Docker starts on boot, so JoltBot comes back after a reboot.
 
@@ -647,8 +649,9 @@ While that window is open, <http://localhost:8000> on your PC is the server's da
 
 1. At your domain registrar's DNS settings, add an **A record**:
    - name `joltbot` (or `@` for the bare domain)
-   - value = the server's **IPv4** address, from the Hetzner Cloud Console
-   - Optionally add an **AAAA** record with the IPv6 address.
+   - value = the server's **IPv4** address (on Lightsail, the static IP attached to the instance; on Hetzner, from the Hetzner Cloud Console)
+   - Optionally add an **AAAA** record with the IPv6 address. If you do, ports 80 and 443 must be open for IPv6 too.
+   - With Cloudflare as the DNS host, set both records to **DNS only** (grey cloud), or Caddy cannot get its certificate.
 2. Wait until `nslookup joltbot.yourname.com` shows the server's IP. Usually minutes, at most a few hours.
 3. In `.env`, set `PUBLIC_BASE_URL=https://joltbot.yourname.com` and `DOMAIN=joltbot.yourname.com`.
 4. In the Developer Portal → OAuth2 → Redirects, add `https://joltbot.yourname.com/auth/callback`.
@@ -808,7 +811,7 @@ docker compose up -d                                             # restart so bo
 - Backups older than 7 days are deleted. Change that or the folder with `KEEP_DAYS=30 BACKUP_DIR=/some/folder ./deploy/backup.sh`.
 - A backup holds every server's settings and tickets but **no dashboard logins**: sessions are removed from the copy, so the file never contains anyone's Discord login token. Keep the files private all the same.
 - A failed backup is logged at ERROR, so it reaches `ALERT_WEBHOOK_URL` if you set one.
-- The backups sit on the same server as JoltBot. To survive losing the server, also copy `~/joltbot-backups` elsewhere (for example `rsync` to another machine, or switch on Hetzner's server backups).
+- The backups sit on the same server as JoltBot. To survive losing the server, also copy `~/joltbot-backups` elsewhere (for example `rsync` to another machine, or switch on your host's own backups: Lightsail automatic snapshots, Hetzner's server backups).
 - Each server's log channel also keeps the permanent ticket record.
 - Without Docker: `.venv/bin/python -m scripts.backup --out ~/joltbot-backups/joltbot-$(date -u +%F).db`.
 
