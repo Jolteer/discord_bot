@@ -209,3 +209,24 @@ Phases 5 and 6 can swap with Phase 4 if mod log takes longer, since neither depe
 - A settings cache. Reading `module_settings` on every event is what makes dashboard changes apply at once, and SQLite handles it.
 - Switching to Postgres. The brief keeps the storage engine.
 - Rewriting the views as `DynamicItem`s. Looking a ticket up by channel ID works and keeps every posted `custom_id` valid.
+
+## 8. Progress
+
+| Phase | State | Commits | Audit items closed |
+|---|---|---|---|
+| 0 Audit and plan | Done, 2026-11-23 | `140221b` | n/a |
+| 1 Safety net | Done, 2026-11-23 | `736e4a9`, `af167e7` | Test gaps T1, T2, T3, T5, T6, T7. New bug B7 recorded |
+| 2 Config and secrets | Done, 2026-11-23 | `d0c2526` | S1, B5, D10, and the font hosts in S7 |
+| 3 Layering | Not started | | |
+| 4 Module seam | Not started; waits for mod log to merge | | |
+| 5 Reliability | Not started | | |
+| 6 Docs and CI | Not started | | |
+| 7 Deployment | Nothing planned | | |
+
+Decisions taken on 2026-11-23:
+
+- Dev dependencies: `mypy` only. No `pytest-cov`, no `pip-audit`.
+- Mod log merges to `main` before Phase 4.
+- `SESSION_SECRET` minimum length: not added.
+- Stored access tokens: left as they are (decision 4, option a).
+- No test bot. The JoltBot Test application was deleted and is not being replaced, so there is no manual smoke test between phases. The automated tests are the check before a release, and `SMOKE_TEST.md` is run on the live server after one.
