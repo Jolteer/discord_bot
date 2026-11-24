@@ -13,6 +13,7 @@ import discord
 import pytest
 
 from joltbot.core.types import utcnow
+from joltbot.modules.modlog.cog import _role_mentions
 from joltbot.modules.modlog.constants import (
     EVENT_BAN,
     EVENT_BULK_DELETE,
@@ -136,9 +137,20 @@ async def test_roles_added_and_removed_are_one_entry(server):
     (entry,) = await server.entries()
     assert (entry.event_type, entry.actor_id) == (EVENT_MEMBER_ROLES, MOD_ID)
     assert entry.details["changes"] == [
-        {"field": "Roles added", "old": "", "new": "@Staff"},
-        {"field": "Roles removed", "old": "", "new": "@Helper"},
+        {"field": "Roles added", "old": "", "new": "<@&70>"},
+        {"field": "Roles removed", "old": "", "new": "<@&71>"},
     ]
+
+
+def test_role_lists_skip_everyone_and_stop_before_the_limit():
+    everyone, staff = FakeRole(GUILD_A, "@everyone"), FakeRole(70, "Staff")
+    assert _role_mentions([everyone, staff]) == "<@&70>"
+    assert _role_mentions([everyone]) == "none"
+    many = [FakeRole(1000 + i, f"r{i}") for i in range(60)]
+    text = _role_mentions(many, limit=100)
+    assert len(text) <= 100 and text.endswith(" more") and "<@&1000>" in text
+    shown = text.count("<@&")
+    assert text.endswith(f"+{60 - shown} more")
 
 
 async def test_a_timeout_and_its_removal(server):
@@ -186,7 +198,7 @@ async def test_someone_leaving_is_a_leave(server):
     await server.cog.on_raw_member_remove(SimpleNamespace(guild_id=GUILD_A, user=member))
     (entry,) = await server.entries()
     assert entry.event_type == EVENT_MEMBER_LEAVE
-    assert {"name": "Roles", "value": "@Staff"} in entry.details["info"]
+    assert {"name": "Roles", "value": "<@&70>"} in entry.details["info"]
 
 
 async def test_a_kick_is_one_moderation_entry_and_no_leave(server):

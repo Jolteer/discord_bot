@@ -58,7 +58,15 @@ from .constants import (
     TARGET_ROLE,
 )
 from .correlate import SEEN_BAN, SEEN_MESSAGE_DELETE, SEEN_VOICE_LEAVE, SEEN_VOICE_MOVE, AuditRecord
-from .events import STORED_BULK_CONTENT_MAX, STORED_BULK_MESSAGES, STORED_CONTENT_MAX, Facts, LogEvent, cut
+from .events import (
+    STORED_BULK_CONTENT_MAX,
+    STORED_BULK_MESSAGES,
+    STORED_CONTENT_MAX,
+    STORED_VALUE_MAX,
+    Facts,
+    LogEvent,
+    cut,
+)
 from .service import ModLogManager
 
 if TYPE_CHECKING:
@@ -147,9 +155,24 @@ def _user_event(guild: discord.Guild, event: str, user: Any, **fields: Any) -> L
     return log_event
 
 
-def _role_names(roles: Any) -> str:
-    """Role names as ``@a, @b``, without @everyone."""
-    return ", ".join(f"@{role.name}" for role in roles if not role.name.startswith("@")) or "none"
+def _role_mentions(roles: Any, limit: int = STORED_VALUE_MAX) -> str:
+    """Roles as mentions (``<@&1>, <@&2>``), without @everyone.
+
+    Mentions instead of plain names so Discord shows each role in its own colour.
+    A mention inside an embed never pings anyone. The list stops before ``limit``
+    and ends with "+N more", so it is never cut halfway through a mention.
+    """
+    mentions = [role.mention for role in roles if role.name != "@everyone"]
+    if not mentions:
+        return "none"
+    shown: list[str] = []
+    for index, mention in enumerate(mentions):
+        rest = len(mentions) - index - 1
+        suffix = f", +{rest} more" if rest else ""
+        if len(", ".join([*shown, mention])) + len(suffix) > limit:
+            return ", ".join(shown) + f", +{len(mentions) - len(shown)} more"
+        shown.append(mention)
+    return ", ".join(shown)
 
 
 def _channel_chain(channel: Any, channel_id: int) -> tuple[int, ...]:
@@ -404,7 +427,7 @@ class ModLog(commands.Cog):
             # The cast: only a Member has a role list; a plain User (not in the bot's cache) has none.
             member = cast(discord.Member, user)
             event.add_time("Joined", member.joined_at)
-            event.add_info("Roles", _role_names(member.roles))
+            event.add_info("Roles", _role_mentions(member.roles))
         await manager.record(guild, ctx, event)
 
     @commands.Cog.listener()
@@ -433,9 +456,9 @@ class ModLog(commands.Cog):
         if added or removed:
             event = _user_event(guild, EVENT_MEMBER_ROLES, after)
             if added:
-                event.add_change("Roles added", "", _role_names(added))
+                event.add_change("Roles added", "", _role_mentions(added))
             if removed:
-                event.add_change("Roles removed", "", _role_names(removed))
+                event.add_change("Roles removed", "", _role_mentions(removed))
             pending.append((event, (Action.member_role_update.name,), None))
 
         if before.timed_out_until != after.timed_out_until:
